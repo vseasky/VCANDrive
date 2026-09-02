@@ -1,0 +1,8 @@
+# Linux kernel module build output
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order
