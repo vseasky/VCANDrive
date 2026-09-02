@@ -1,7 +1,9 @@
 # Python API 参考
 
 本文档是 `vcan-usb` 与 `vkgs-usb` 的统一接口说明。完整安装与故障处理请先看
-《[PythonCAN 使用手册](PythonCAN使用手册.md)》。两者 API 保持同构。
+《[PythonCAN 使用手册](PythonCAN使用手册.md)》。两者 API 保持同构。面向项目生成、
+DBC 与 CANopen 集成时，可同时查阅 [`python-can-skill`](../python-can-skill/SKILL.md)
+和《[CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md)》。
 
 ## 1. 公共入口
 
@@ -200,4 +202,15 @@ bus.identify(enabled: bool = True) -> None   # 仅 vkgs_usb
 5. 不靠频繁开关端点恢复异常；
 6. `stop/start` 不能复原设备级 USB OUT 挂接异常；
 7. VCAN 与 VKGS 的经典/FD 线长参数必须分别配置。
+
+## 11. 应用层集成边界
+
+- DBC codec 接收/输出 `can.Message`，负责 signal 的字节序、signed、scale/offset、
+  choices 与 multiplex；它不负责 USB 发现或控制器位时序。
+- CANopen 栈通过 `python-can` backend 使用本项目，负责 EDS/DCF 对象字典、NMT、
+  PDO、SDO、EMCY、SYNC 与 heartbeat；传统 CANopen 不应仅因硬件支持 FD 就自动启用 FD。
+- SocketCAN 路径应使用 `interface="socketcan", channel="can0"`；直接 USB 路径使用
+  `interface="vcan_usb"/"vkgs_usb", channel=0`，两种 `channel` 语义不同。
+- 应用协议测试应优先使用 virtual bus/`vcan0`，硬件测试再验证位时序、终端、ACK、
+  BUS-OFF 和 USB 重枚举。
 

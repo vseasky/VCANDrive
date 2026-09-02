@@ -11,11 +11,15 @@
 | VKGS/gs_usb 扩展 | `1d50:606f` | `vkgs_usb` | `gs_usb` |
 
 厂商控制请求与协议细节见《[驱动特殊 API 说明](驱动特殊API说明.md)》，Python 方案见
-《[PythonCAN 使用手册](PythonCAN使用手册.md)》。
+《[PythonCAN 使用手册](PythonCAN使用手册.md)》。首次安装或内核升级请先看
+《[Linux 内核驱动安装](Linux内核驱动安装.md)》；开发 C/C++、CANopen 或 DBC 项目时可查阅
+[`socket-can-skill`](../socket-can-skill/SKILL.md)。
 
 ## 1. 设备拓扑与所有权
 
-- 一个 **USB interface**（即“通道序号”或 `channel`）对应一个 SocketCAN netdev，通常也是一个独立 CAN 通道（各自有独立 IN/OUT）；
+- 一个 **USB interface** 对应一个 SocketCAN netdev，通常也是一个独立 CAN 通道（各自有独立 IN/OUT）；
+- `channel` = USB interface 的软件索引（`USB bInterfaceNumber`）；
+- `canX` = Linux 分配的网卡名（如 `can0`、`can1`）；
 - 驱动按 `interface` 逐个 probe，每个接口注册一个 `canX`，**不会写死通道数**；
 - `canX` 与 USB `channel` 命名不等价（`can0/can1` 由 Linux 分配）；
 - SocketCAN 与 Python 后端不能并发 claim 同一 interface；
@@ -61,15 +65,18 @@ sudo modprobe vkgs_usb
 
 ### 2.1 处理 gs_usb 冲突
 
-`1d50:606f` 会被主线 `gs_usb` 先匹配。长期使用本仓库驱动前建议屏蔽：
+`1d50:606f` 会被主线 `gs_usb` 先匹配。先临时卸载并确认 `vkgs_usb` 工作正常；只有在
+系统没有其他必须使用主线 `gs_usb` 的设备时，才创建
+`/etc/modprobe.d/blacklist-gs_usb.conf`：
 
-```bash
-echo "blacklist gs_usb" | sudo tee /etc/modprobe.d/blacklist-gs_usb.conf
-sudo modprobe -r gs_usb
-sudo modprobe vkgs_usb
+```text
+blacklist gs_usb
+install gs_usb /bin/false
 ```
 
-取消时删除该文件并 `sudo depmod -a`，重新插拔后生效。
+Ubuntu/Debian 再执行 `sudo update-initramfs -u`，卸载 `gs_usb`、加载 `vkgs_usb` 并
+重新插拔。取消时删除该文件并再次更新 initramfs。完整流程见
+[Linux 内核驱动安装](Linux内核驱动安装.md)。
 
 ## 3. CAN 配置
 
@@ -245,7 +252,33 @@ struct canfd_frame txfd = {
 write(fd, &txfd, sizeof(txfd));
 ```
 
-## 8. 与 Python 后端切换
+## 8. DBC 与 CANopen
+
+SocketCAN 只传输帧；DBC signal codec 与 CANopen 协议栈都运行在用户态：
+
+```bash
+candump can0 | python3 -m cantools decode network.dbc
+python3 -m cantools generate_c_source --database-name vehicle network.dbc
+```
+
+Python CANopen 栈可直接连接已配置好的接口：
+
+```python
+import canopen
+
+network = canopen.Network()
+network.connect(interface="socketcan", channel="can0")
+try:
+    node = network.add_node(6, "device.eds")
+finally:
+    network.disconnect()
+```
+
+DBC 不能替代 CANopen EDS/DCF；SocketCAN error frame 也不同于 CANopen EMCY。完整的
+COB-ID、PDO/SDO/NMT、DBC 字节序与测试说明见
+[CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md)。
+
+## 9. 与 Python 后端切换
 
 回到 SocketCAN：
 
@@ -265,8 +298,3 @@ sudo modprobe vkgs_usb
 ```
 
 切回 Python 前确保 `canX` 全部 down 并关闭所有 Python Bus。
-
-
-
-
-

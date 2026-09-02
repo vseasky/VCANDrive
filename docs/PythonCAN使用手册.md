@@ -13,6 +13,10 @@
 > 关键规则：同一 USB 接口不能同时被 `python-can` 后端和 SocketCAN 内核驱动占用。
 > 需要 `candump` / `cansend` / `ip link` PF_CAN 场景时，请优先使用 SocketCAN 手册。
 
+需要按 DBC signal 或 CANopen 对象字典开发时，先完成本文的 transport 收发，再阅读
+《[CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md)》或直接使用
+[`python-can-skill`](../python-can-skill/SKILL.md)。
+
 ## 1. 快速开始
 
 以下命令均在 `04.VCANDrive/python-cli/` 目录执行。
@@ -346,7 +350,18 @@ sudo ./can-test --interface vkgs_usb --channels 2 --mode bus --frames 60
 内置顺序默认覆盖经典 CAN、FD/BRS-off、FD/BRS-on；若不测 FD 可加
 `--skip-fd`。
 
-## 10. 与 SocketCAN 切换
+## 10. DBC 与 CANopen 接入
+
+- DBC：使用 `cantools.database.load_file(..., strict=True)`，从消息定义读取 frame ID、
+  标准/扩展格式和长度，再把 `encode()` 结果放进 `can.Message`。
+- CANopen：`canopen.Network.connect()` 的参数会传给 python-can，可直接使用
+  `interface="vcan_usb"` 或 `interface="vkgs_usb"`；设备 EDS/DCF 决定对象字典和 PDO 映射。
+- DBC 的 `is_fd` 不等于启用 BRS；CANopen CC 通常使用 classic CAN，FD 能力必须由
+  全网节点和协议栈共同确认。
+
+完整代码与错误分层见 [CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md)。
+
+## 11. 与 SocketCAN 切换
 
 切回 SocketCAN 前确保所有 Bus 已 `shutdown()`，再按目标模式加载内核模块：
 

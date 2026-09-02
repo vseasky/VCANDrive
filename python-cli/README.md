@@ -95,6 +95,8 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 - [PythonCAN 使用手册](../docs/PythonCAN使用手册.md)
 - [Python API 参考](../docs/PythonAPI参考.md)
 - [Python 终端工具](../docs/Python终端工具.md)
+- [CANopen 与 DBC 开发指南](../docs/CANopen与DBC开发指南.md)
+- [python-can-skill](../python-can-skill/SKILL.md)
 - [驱动特殊 API 说明](../docs/驱动特殊API说明.md)
 - [开发约束记录](PYTHON_CAN_DEVELOPMENT.md)
 

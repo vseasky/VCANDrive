@@ -1,64 +1,139 @@
 # VCANDrive
 
-VCANDrive 是 HPMicro USB-CAN 硬件的配套驱动文档与配套软件仓库，覆盖：
+VCANDrive 是 HPMicro 双通道 USB-CAN FD 设备的开源主机端开发仓库，提供 Linux SocketCAN 内核驱动、跨平台 `python-can` USB 后端、命令行工具、自动验收脚本，以及面向 API 项目开发的可复用技能文档。
 
-- Linux SocketCAN 内核驱动（`kernel/`）
-- Python-can 后端驱动包（`python-cli/`）
-- 驱动验证与问题排查文档（`docs/`）
+- Linux：把设备注册为标准 `canX` 网络接口，兼容 `iproute2`、`can-utils` 和 `PF_CAN`。
+- Windows / Linux / macOS：通过 `vcan_usb` 或 `vkgs_usb` 后端接入 `python-can`。
+- 应用层：提供 CAN/CAN FD、CANopen、DBC 编解码与工程化测试指引。
+- 设备能力：双通道、经典 CAN、CAN FD/BRS、可切换 120 Ω 终端、电气/总线状态诊断。
 
-仓库不包含硬件固件镜像；若需比对协议、时序或寄存器行为，可结合同级 `../03.FirmWare` 目录中的固件资料。
+本仓库不包含固件镜像。协议、USB 描述符或硬件行为需要交叉核对时，以同级 `../03.FirmWare/Application/vcan/` 的当前固件实现为准。
 
-## 版本与定位
+## 支持矩阵
 
-VCANDrive 同时支持两种 USB 协议模式：
+同一硬件可运行不同 USB personality；当前 USB ID 必须与驱动、Python 包和接口名匹配。
 
-| 模式 | USB VID:PID | 内核入口 | Python 接口名 | 安装包 |
+| 设备模式 | USB VID:PID | Linux 模块 | Python 包 / interface | 本仓库支持 |
 |---|---|---|---|---|
-| VCAN | `1d50:6080` | `vcan_usb` | `vcan_usb` | `vcan-usb` |
-| VKGS / gs_usb 扩展 | `1d50:606f` | `vkgs_usb` | `vkgs_usb` | `vkgs-usb` |
+| VCAN 原生 | `1d50:6080` | `vcan_usb` | `vcan-usb` / `vcan_usb` | 是 |
+| GS_USB / VKGS | `1d50:606f` | `vkgs_usb` | `vkgs-usb` / `vkgs_usb` | 是 |
+| PEAK 兼容 | 随硬件型号而定 | 使用 PEAK 兼容驱动 | 未提供 | 仅支持从工具切换设备模式 |
 
-文档中将“VCAN 固件”“VKGS 固件”“CAN 接口”按同一口径描述，避免在不同文档中出现
-混用别称。
+Linux 内核可能用主线 `gs_usb` 抢先绑定 `1d50:606f`。使用本仓库的 `vkgs_usb` 前，应先确认实际绑定关系；不要在没有检查其他 gs_usb 设备的情况下直接永久屏蔽模块。
 
-## 文件索引（先读顺序）
+## 从这里开始
 
-- `docs/README.md`：文档入口与推荐阅读顺序（建议先读）。
-- `docs/PythonCAN使用手册.md`：Python backend 安装、运行时依赖、双端口并发模型。
-- `docs/PythonAPI参考.md`：Python API 参数、异常、扩展方法和多通道约束。
-- `docs/Python终端工具.md`：`canctl`/`can-test` 命令参数与常见用法。
-- `docs/SocketCAN使用手册.md`：Linux SocketCAN 安装与 `candump`/`cansend` 验证流程；
-  C SocketCAN 示例集中在“C API 快速示例”小节。
-- `docs/驱动特殊API说明.md`：USB 厂商控制请求、帧格式差异、协议切换。
-- `docs/优化记录.md`：本项目可见行为变更和验证说明。
+### Linux SocketCAN
 
-## 常见工作流
+```bash
+sudo apt install build-essential linux-headers-$(uname -r) can-utils
+cd kernel/vcan_usb                 # 1d50:6080；606f 改为 kernel/vkgs_usb
+make
+sudo make install
+sudo depmod -a
+sudo modprobe vcan_usb
 
-1. 先确认当前固件模式与 VID:PID；
-2. 选择 **同一种后端**（Linux SocketCAN 或 Python 后端）；
-3. 通过 `channel`（USB interface 编号）和 `port_path`（建议）来稳定定位硬件；
-4. 多协议切换请使用 `usb_mode`，切换后设备会重启并重新枚举；
-5. 切换 backends 之前，先关闭所有已打开的 Bus / can 接口，避免并发占用。
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 500000 restart-ms 100
+sudo ip link set can0 up
+candump can0
+```
 
-## 开发注意
+完整流程见 [Linux 内核驱动安装](docs/Linux内核驱动安装.md) 和 [SocketCAN 使用手册](docs/SocketCAN使用手册.md)。
 
-本仓库在本轮优化中只补充文档与说明，不修改驱动源码和已发布的核心行为。
+### Python API
 
-- 需要修改内核或 Python 运行时代码时，按模块独立改动；
-- 如果你是首次接入，优先确认：
-  - Linux 下 udev 与权限策略；
-  - Windows 下每个 MI_xx 是否已绑定 WinUSB；
-  - `bus/address/port_path` 三者的组合是否唯一指向目标设备；
-- 有关错误处理与重试行为，请使用终端日志和 `tests/unit` 回归用例核验。
+```bash
+cd python-cli
+python -m venv .venv
+.venv/bin/python -m pip install -e ./vkgs_usb   # 606f
+# 6080 使用：.venv/bin/python -m pip install -e ./vcan_usb
+sudo ./canctl --interface vkgs_usb list
+```
 
-## 目录快速入口
+```python
+import can
 
-- `kernel/vcan_usb/`、`kernel/vkgs_usb/`：内核驱动源码与编译说明
-- `kernel/tests/`：驱动验收脚本
-- `python-cli/vcan_usb/`、`python-cli/vkgs_usb/`：python-can 后端源码
-- `python-cli/tests/`：单元测试和硬件验收脚本
+with can.Bus(
+    interface="vkgs_usb",
+    channel=0,
+    bitrate=500_000,
+) as bus:
+    bus.send(can.Message(
+        arbitration_id=0x123,
+        is_extended_id=False,
+        data=b"\x11\x22\x33\x44",
+    ))
+```
 
-## 许可证
+Windows 将虚拟环境解释器改为 `.venv\Scripts\python.exe`，并按 `MI_xx` 把目标 USB interface 绑定到 WinUSB。完整流程见 [PythonCAN 使用手册](docs/PythonCAN使用手册.md) 和 [Python API 参考](docs/PythonAPI参考.md)。
 
-仓库许可更新为 GNU GPL，详见根目录 `LICENSE`。如有二次分发或二次开发，请保留原始版权
-与协议声明。
+### CANopen 与 DBC
 
+VCANDrive 负责 CAN 帧传输；CANopen/DBC 属于应用层：
+
+- CANopen 使用 EDS/DCF 对象字典和成熟协议栈处理 NMT、PDO、SDO、EMCY、SYNC、heartbeat。
+- DBC 使用 `cantools` 或生成的 C codec 处理信号字节序、缩放、枚举和 multiplex。
+
+快速示例、边界和测试方法见 [CANopen 与 DBC 开发指南](docs/CANopen与DBC开发指南.md)。
+
+## 面向项目开发的 Skills
+
+仓库根目录提供两个独立技能包，可直接查阅，也可加入支持 Skills 的开发环境：
+
+| Skill | 适用场景 | 主要参考 |
+|---|---|---|
+| [`python-can-skill`](python-can-skill/SKILL.md) | VCANDrive Python USB API、CAN/CAN FD、DBC、CANopen | Bus 生命周期、设备定位、异常、编解码与测试 |
+| [`socket-can-skill`](socket-can-skill/SKILL.md) | Linux `canX`、C/C++ `PF_CAN`、can-utils、DBC、CANopen | 驱动接入、raw socket、过滤、错误帧与协议集成 |
+
+两个技能按需加载各自 `references/`，避免把 USB backend 的 `channel=0` 与 SocketCAN 的 `can0` 混用。
+
+## 关键术语
+
+- `channel`：Python backend 使用的 USB `bInterfaceNumber`，不是 Linux 的 `can0/can1`。
+- `canX`：Linux 动态分配的 SocketCAN 网络接口名，不保证等于面板通道号。
+- `interface`（Python）：`vcan_usb` 或 `vkgs_usb`，用于选择协议 backend。
+- `bus/address/port_path`：USB 设备定位信息；多设备场景优先使用较稳定的 `port_path`。
+- `index`：相同 VID/PID 设备的临时枚举序号，设备重枚举后可能变化。
+- `MI_xx`：Windows 复合 USB 设备中的独立 WinUSB interface，与 channel 一一对应。
+
+## 使用边界
+
+- 同一 USB interface 同时只能由一种后端占用：SocketCAN 内核模块或 Python USB backend 二选一。
+- USB 模式切换会写 Flash、重启设备、改变 USB ID 并使旧句柄失效。
+- CAN 发送超时后的结果可能不确定；除非上层协议有幂等/去重机制，否则不要盲目自动重发。
+- CAN 总线必须有正确接线、统一位时序和两个物理末端终端；只有一个活动节点时通常收不到 ACK。
+- `cangen`、终端切换和硬件验收脚本会改变真实总线状态，只在明确隔离的测试网络执行。
+
+## 文档导航
+
+- [文档总览](docs/README.md)
+- [项目说明](docs/项目说明.md)
+- [Linux 内核驱动安装](docs/Linux内核驱动安装.md)
+- [SocketCAN 使用手册](docs/SocketCAN使用手册.md)
+- [PythonCAN 使用手册](docs/PythonCAN使用手册.md)
+- [Python API 参考](docs/PythonAPI参考.md)
+- [Python 终端工具](docs/Python终端工具.md)
+- [CANopen 与 DBC 开发指南](docs/CANopen与DBC开发指南.md)
+- [驱动特殊 API 说明](docs/驱动特殊API说明.md)
+- [优化记录](docs/优化记录.md)
+
+## 仓库结构
+
+```text
+VCANDrive/
+├── kernel/                 Linux vcan_usb/vkgs_usb 驱动与硬件验收脚本
+├── python-cli/             python-can backends、CLI 与测试
+├── docs/                   安装、API、协议与排障文档
+├── python-can-skill/       Python CAN 项目开发技能
+├── socket-can-skill/       Linux SocketCAN 项目开发技能
+├── LICENSE                 GNU GPL v2 全文
+└── README.md
+```
+
+## 许可证与镜像
+
+本项目采用 [GNU General Public License v2.0 only](LICENSE)，与 Linux 驱动文件中的 `SPDX-License-Identifier: GPL-2.0` 一致。第三方依赖继续遵循各自许可证。
+
+- GitHub：<https://github.com/vseasky/VCANDrive>
+- Gitee：<https://gitee.com/vseasky/VCANDrive>
