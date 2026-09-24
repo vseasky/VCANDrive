@@ -1,82 +1,85 @@
-# VCAN USB Linux 内核驱动
+# VCAN USB Linux Kernel Driver
 
-本驱动为 HPMicro VCAN USB‑CAN(FD) 设备（VID:PID `1d50:6080`）提供 SocketCAN 接口。协议层与
-`../../ref/firmware/vcan_0_0_2` 保持一致。
+Out-of-tree Linux SocketCAN driver for the VCAN USB-CAN(FD) mode.
 
-> 中文说明：
-> [SocketCAN 使用手册](../../docs/SocketCAN使用手册.md)、
-> [驱动特殊 API 说明](../../docs/驱动特殊API说明.md)
+> 中文文档：[SocketCAN 使用手册](../../udocs/SocketCAN使用手册.md)、
+> [驱动特殊 API 说明](../../udocs/驱动特殊API说明.md)。
 
-## 设备拓扑与命名模型
+## Topology
 
-- 设备按 **USB interface** 分配通道：每个 interface 各有一组独立 IN/OUT Bulk 端点；
-- 驱动按 interface 逐个 probe，动态注册 SocketCAN netdev；
-- 一个带 N 路的硬件会注册 `can0 .. canN-1`（不会写死通道数量）；
-- 每个 interface 独立 bring-up 与状态管理。
+The device exposes **one USB interface per CAN channel**, each with its own bulk
+IN/OUT endpoint pair. The driver probes per interface and registers one
+SocketCAN netdev per interface — it does **not** hard‑code the channel count, so
+a device with N interfaces yields `can0 .. canN-1`. Each interface is fully
+independent (own endpoints, own bring‑up).
 
-## 协议特征速记
+## Protocol notes
 
-- 帧为自描述结构：`{echo_id, opcode, flags}` + CAN 数据；
-  `opcode = (channel << 12) | byte_size`。
-- 固件不回显 TX；发送完成以 bulk‑OUT 回调为准，即 `TX` 阶段不会等待主机重入。
-- 位时序为寄存器编码：固件对各段 +1、并忽略 `prop_seg`，所以主机下发时使用
-  `brp-1`、`(prop_seg + phase_seg1)-1`、`phase_seg2-1`、`sjw-1`。
-- 软件版本默认 80MHz，可在探测阶段读取并打印固件 `sw/hw/UID`。
-- 终端电阻走 `VCAN_USB_BREQ_CAN_TERMINATION(37)`，与标准 SocketCAN `ip link set canX type can termination` 对应；
-  总线负载上报通过 `VCAN_USB_BREQ_CAN_BUS_LOAD(36)`。
-- 若固件上报了 `CAN_CTRLMODE_BERR_REPORTING` capability，`berr-reporting on` 会启用标准
-  `CAN_ERR_PROT_*` 事件帧输出。
+- Self‑describing frames: every frame starts with `{ echo_id, opcode, flags }`,
+  `opcode = (channel << 12) | byte_size`. Data payload starts at offset 24.
+- The firmware does **not** echo transmitted frames; TX is completed on the
+  bulk‑OUT URB completion.
+- Bit timing is register‑encoded (firmware adds 1 to each segment and ignores
+  `prop_seg`): the host sends `brp-1`, `(prop_seg+phase_seg1)-1`, `phase_seg2-1`,
+  `sjw-1`.
+- Termination (120 Ω) uses `VCAN_USB_BREQ_CAN_TERMINATION` (37) and is wired
+  to the standard SocketCAN termination API. Bus-load reporting can be controlled
+  explicitly with `VCAN_USB_BREQ_CAN_BUS_LOAD` (36).
+- Device version/UID/UUID is read via the HAL-specific
+  `VCAN_USB_BREQ_BSP_DEVICE_INFO` (33) request and logged at probe. Software
+  and hardware versions use `vMAJOR.MINOR.PATCH` notation.
+- `berr-reporting` is advertised as a `CAN_CTRLMODE_BERR_REPORTING` capability
+  when the firmware reports the matching feature bit; enabling it
+  (`ip link set canX type can berr-reporting on`) makes the device push
+  protocol-violation error frames (stuff/form/ACK/bit0/bit1/CRC) in addition to
+  the always-on bus-off/error-passive/error-warning state frames.
+- HW timestamps are intentionally not enabled, keeping the receive path simple
+  and avoiding another version-dependent kernel interface.
 
-## 编译与加载
+## Kernel compatibility
+
+The supported baseline is upstream Linux **4.12 or newer**. The local
+`usbcan_compat.h` isolates CAN DLC helper renames and the independently changed
+echo-SKB signatures in 5.12 and 5.13. Termination control and CAN FD remain
+available across the whole supported range. Vendor kernels with backported APIs
+may differ from their advertised version and should be build-tested separately.
+
+## Build
 
 ```bash
-cd kernel/vcan_usb
-
 make
 sudo make install
 sudo depmod -a
 sudo modprobe vcan_usb
 ```
 
-卸载：
+DKMS: copy this directory to `/usr/src/vcan_usb-1.1.4/`, then
+`dkms add/build/install -m vcan_usb -v 1.1.4`.
+
+## Usage
 
 ```bash
-sudo modprobe -r vcan_usb
-```
-
-### DKMS
-
-```bash
-sudo cp -r . /usr/src/vcan_usb-1.0.0
-cd /usr/src/vcan_usb-1.0.0
-sudo dkms add -m vcan_usb -v 1.0.0
-sudo dkms build -m vcan_usb -v 1.0.0
-sudo dkms install -m vcan_usb -v 1.0.0
-```
-
-## 运行示例
-
-```bash
-sudo ip link set can0 down
 sudo ip link set can0 up type can bitrate 500000
-# CAN FD
+# CAN FD:
 sudo ip link set can0 up type can bitrate 1000000 dbitrate 5000000 fd on
-sudo ip link set can0 type can termination 120
+sudo ip link set can0 type can termination 120   # 120 Ohm on (0 = off)
 candump can0
 cansend can0 123#11223344
 ```
 
-## 验收脚本
+## Test
 
-`../tests/vcan_usb/test_vcan_usb.sh` 会编译并重载模块，在有两路物理通道的设备上执行 6 阶段收发对照。
-脚本要求两路 `can` 在同总线 CANH↔CANH、CANL↔CANL 连接。
+Only the hardware stress entry remains:
 
 ```bash
 sudo ../tests/vcan_usb/test_vcan_usb.sh
-sudo env NFRAMES=100 BUILD=0 ../tests/vcan_usb/test_vcan_usb.sh
+sudo env BUILD=0 DURATION=20 REOPEN_LOOPS=10 ../tests/vcan_usb/test_vcan_usb.sh
 ```
 
-- `NFRAMES`：每个阶段发送数量；
-- `BUILD=0`：不重编/重载，仅用当前加载的模块。
-
-该脚本将每次发送与接收计数做严格比对，不是“能收多少算多少”。
+Requires two connected, terminated physical CAN channels and can-utils. The
+suite covers mixed traffic, ISO-TP/J1939, sequence integrity, load, CAN FD and
+close/open regression. Unsupported optional FD tools are reported as skips;
+`REQUIRE_ALL=1` makes missing coverage fail. The old `NFRAMES` setting is no
+longer used. Default execution builds/reloads the driver and leaves interfaces
+down during cleanup. Use `sudo bash <script>` if its executable bit is missing.
+See [test strategy](../tests/CAN_TEST_STRATEGY.md) for full coverage details.

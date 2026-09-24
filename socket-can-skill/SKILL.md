@@ -25,7 +25,7 @@ Build Linux applications on the stable SocketCAN network interface. Once the cor
    - For CANopen or DBC-backed applications, read [references/canopen-dbc.md](references/canopen-dbc.md) plus the transport reference relevant to the implementation language.
    - If the request must access the VCANDrive USB interface directly on Windows, macOS, or Linux, use `python-can-skill` instead.
 
-3. When this repository is present, use `docs/Linux内核驱动安装.md`, `docs/SocketCAN使用手册.md`, and the matching `kernel/*/README.md` as project-specific references. Inspect driver source only when needed for diagnosis; do not change it unless the user explicitly asks.
+3. When this repository is present, use `udocs/Linux内核驱动安装.md`, `udocs/SocketCAN使用手册.md`, `udocs/设备管理器.md`, and the matching `kernel/*/README.md` as project-specific references. Inspect driver source only when needed for diagnosis; do not change it unless the user explicitly asks.
 
 ## Implementation invariants
 

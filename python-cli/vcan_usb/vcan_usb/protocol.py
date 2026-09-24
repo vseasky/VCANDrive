@@ -1,4 +1,4 @@
-"""HPMicro VCAN private wire protocol implementation (firmware V_0_0_2)."""
+"""type 0 VCAN private wire protocol implementation (firmware V_0_0_3)."""
 
 from __future__ import annotations
 
@@ -24,15 +24,19 @@ ECHO_STATE = 0xA4C95E3D
 ECHO_SETUP = 0xA5C95E3D
 
 # Vendor request identifiers.
+BREQ_HOST_FORMAT = 0
 BREQ_MODE = 1
 BREQ_BERR = 2
 BREQ_CAN_STATE = 3
-BREQ_BSP_DEVICE_INFO = 33
-BREQ_USB_MODE = 34
-BREQ_CAN_BUS_LOAD = 36
-BREQ_CAN_TERMINATION = 37
+BREQ_BT_CONST = 16
+BREQ_BT_CONST_EXT = 17
 BREQ_BITTIMING = 24
 BREQ_DATA_BITTIMING = 25
+BREQ_BSP_DEVICE_INFO = 33
+BREQ_USB_MODE = 34
+BREQ_CAN_FILTERS = 35
+BREQ_CAN_BUS_LOAD = 36
+BREQ_CAN_TERMINATION = 37
 
 # vcan_usb_device_state.state / vcan_usb_can_state (see vcan_usb.h).
 CAN_STATE_ERROR_ACTIVE = 0
@@ -43,12 +47,15 @@ CAN_STATE_STOPPED = 4
 CAN_STATE_SLEEPING = 5
 
 # vcan_usb_device_berr.error_code (protocol-violation reason).
+ERROR_CODE_NONE = 0
 ERROR_CODE_STUFF = 1
 ERROR_CODE_FORM = 2
 ERROR_CODE_ACK = 3
 ERROR_CODE_BIT1 = 4
 ERROR_CODE_BIT0 = 5
 ERROR_CODE_CRC = 6
+ERROR_CODE_NO_CHANGE = 7
+ERROR_CODE_UNKNOWN = 127
 
 # Device and USB personality modes.
 MODE_RESET = 0
@@ -61,6 +68,7 @@ USB_MODE_GS_USB = 2
 MODE_LOOPBACK = 1 << 1
 MODE_FD = 1 << 8
 MODE_FD_NON_ISO = 1 << 9
+FLAG_OVERFLOW = 1 << 0
 FLAG_FD = 1 << 1
 FLAG_BRS = 1 << 2
 FLAG_ESI = 1 << 3
@@ -77,6 +85,7 @@ CAN_STATE_FIELDS = struct.Struct("<QIII")
 # vcan_usb_device_berr fields following HEADER: error_flag, error_code,
 # rx_error_count, tx_error_count, error_logging_count, 3 reserved bytes.
 DEVICE_BERR_FIELDS = struct.Struct("<BBBBB3x")
+DEVICE_LOAD_FIELDS = struct.Struct("<QHHII")
 FD_DLC_LENGTHS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64)
 
 _CONTROL_REQUEST_OUT = 0x41
@@ -133,9 +142,14 @@ class CanFrame:
     channel: int = 0
     fd: bool = False
     brs: bool = False
+    esi: bool = False
     extended: bool = False
     rtr: bool = False
+    error: bool = False
+    overflow: bool = False
     timestamp_us: int = 0
+    # Remote frames carry a requested DLC but no data.
+    dlc: int | None = None
 
 
 def list_devices(vid: int = VID, pid: int = PID) -> list[Any]:
@@ -196,6 +210,7 @@ class CanDevice:
         self.can_state = CAN_STATE_STOPPED
         self.bec = {"rxerr": 0, "txerr": 0}
         self.last_berr: dict[str, int] | None = None
+        self.last_bus_load: dict[str, int] | None = None
 
         if hasattr(self.dev, "start_rx"):
             self.ep_in = self.dev.ep_in
@@ -259,7 +274,7 @@ class CanDevice:
                 f"short control write: {bytes_written}/{len(packet)}"
             )
 
-    def get_control(self, request: int, size: int) -> bytes:
+    def get_control(self, request: int, size: int, value: int = 0) -> bytes:
         """Read and validate one channel-scoped vendor response."""
         expected_size = HEADER.size + size
         try:
@@ -267,7 +282,7 @@ class CanDevice:
                 self.control_dev.ctrl_transfer(
                     _CONTROL_REQUEST_IN,
                     request | _CONTROL_RESPONSE_FLAG,
-                    0,
+                    value,
                     self.channel,
                     expected_size,
                     timeout=self.timeout,
@@ -292,16 +307,58 @@ class CanDevice:
             raise ProtocolError("invalid setup response")
         return response[HEADER.size:]
 
+    def capabilities(self) -> dict[str, Any]:
+        """Read channel capabilities rather than identifying an MCU by version."""
+        values = struct.unpack("<10I", self.get_control(BREQ_BT_CONST, 40))
+        feature, clock_hz = values[:2]
+        nominal = values[2:]
+        data = None
+        if feature & (1 << 8):
+            if not feature & (1 << 10):
+                raise ProtocolError("FD advertised without extended bit-timing limits")
+            extended = struct.unpack("<18I", self.get_control(BREQ_BT_CONST_EXT, 72))
+            if extended[1] != clock_hz:
+                raise ProtocolError("inconsistent nominal/data clock")
+            data = extended[10:]
+        return {"feature": feature, "clock_hz": clock_hz,
+                "fd": bool(feature & (1 << 8)), "nominal": nominal, "data": data}
+
     def info(self) -> dict[str, Any]:
         """Read firmware, hardware, and device identity information."""
         response = self.get_control(BREQ_BSP_DEVICE_INFO, 40)
         values = DEVICE_INFO_FIELDS.unpack(response)
-        return {
-            "sw_version": values[0],
-            "hw_version": values[1],
+        sw_version, raw_hw_version = values[:2]
+        hw_flags = raw_hw_version >> 24 & 0x01
+        hw_version = raw_hw_version & 0xFFFF
+        max_packet_size = int(getattr(self.ep_out, "wMaxPacketSize", 0))
+        usb_speed = (
+            "unknown" if not max_packet_size else
+            "SS" if max_packet_size > 512 else
+            "HS" if max_packet_size > 64 else "FS"
+        )
+        result = {
+            "sw_version": sw_version,
+            "sw_version_text": (
+                f"v{sw_version >> 16 & 0xff}."
+                f"{sw_version >> 8 & 0xff}.{sw_version & 0xff}"
+            ),
+            "raw_hw_version": raw_hw_version,
+            "ota_magic": (raw_hw_version >> 16) & 0xFF,
+            "sw_version_full_text": "v" + ".".join(
+                str((sw_version >> shift) & 0xFF) for shift in (24, 16, 8, 0)),
+            "hw_version": hw_version,
+            "hw_version_text": f"v{hw_version >> 8 & 0xff}.{hw_version & 0xff}",
+            "hw_flags": hw_flags,
+            "hw_isolated": bool(hw_flags & 0x01),
+            "hw_revision_major": hw_version >> 8 & 0xFF,
+            "hw_revision_minor": hw_version & 0xFF,
+            "usb_speed": usb_speed,
             "uid": list(values[2:6]),
             "uuid": list(values[6:10]),
         }
+        result["uid_hex"] = "".join(f"{word:08x}" for word in result["uid"])
+        result["uuid_hex"] = "".join(f"{word:08x}" for word in result["uuid"])
+        return result
 
     def version(self) -> dict[str, int]:
         device_info = self.info()
@@ -357,15 +414,22 @@ class CanDevice:
         )
         self.set_control(request, payload)
 
-    def send(self, frame: CanFrame) -> None:
+    def send(self, frame: CanFrame, timeout_ms: int | None = None) -> None:
         """Encode and write one CAN frame."""
         flags = FLAG_FD if frame.fd else 0
         flags |= FLAG_BRS if frame.brs else 0
+        flags |= FLAG_ESI if frame.esi else 0
         flags |= FLAG_EFF if frame.extended else 0
         flags |= FLAG_RTR if frame.rtr else 0
+        flags |= FLAG_ERR if frame.error else 0
 
         frame_width = _FD_FRAME_WIDTH if frame.fd else _CLASSIC_FRAME_WIDTH
-        dlc = length_to_dlc(len(frame.data), frame.fd)
+        if frame.fd and frame.rtr:
+            raise ValueError("CAN FD does not support remote frames")
+        dlc = length_to_dlc(
+            frame.dlc if frame.rtr and frame.dlc is not None else len(frame.data),
+            frame.fd,
+        )
         padded_length = dlc_to_length(dlc, frame.fd)
         packet_size = _HEADER_AND_FRAME_FIELDS_SIZE + frame_width
         packet = HEADER.pack(
@@ -382,7 +446,7 @@ class CanDevice:
             bytes_written = self.dev.write(
                 self.ep_out.bEndpointAddress,
                 packet,
-                timeout=self.timeout,
+                timeout=self.timeout if timeout_ms is None else timeout_ms,
             )
         except usb.core.USBTimeoutError as exc:
             raise ProtocolError(
@@ -455,26 +519,53 @@ class CanDevice:
             if offset + frame_size > len(buffer):
                 self._rx_tail = buffer[offset:]
                 break
+            if channel != self.channel:
+                raise ProtocolError(
+                    f"bulk frame channel {channel} != interface {self.channel}"
+                )
 
             if echo_id == ECHO_RX and frame_size >= _HEADER_AND_FRAME_FIELDS_SIZE:
                 can_id, dlc, timestamp_us = CAN_FRAME_FIELDS.unpack_from(
                     buffer, offset + HEADER.size
                 )
                 is_fd = bool(flags & FLAG_FD)
+                if is_fd and flags & FLAG_RTR:
+                    raise ProtocolError("CAN FD remote frame is invalid")
                 data_length = dlc_to_length(dlc, is_fd)
                 data_offset = offset + _HEADER_AND_FRAME_FIELDS_SIZE
+                expected_size = data_offset - offset + (
+                    _FD_FRAME_WIDTH if is_fd else _CLASSIC_FRAME_WIDTH
+                )
+                if frame_size < expected_size:
+                    raise ProtocolError("truncated CAN frame payload")
                 yield CanFrame(
                     can_id=can_id,
                     data=buffer[data_offset:data_offset + data_length],
                     channel=channel,
                     fd=is_fd,
                     brs=bool(flags & FLAG_BRS),
+                    esi=bool(flags & FLAG_ESI),
                     extended=bool(flags & FLAG_EFF),
                     rtr=bool(flags & FLAG_RTR),
+                    error=bool(flags & FLAG_ERR),
+                    overflow=bool(flags & FLAG_OVERFLOW),
                     timestamp_us=timestamp_us,
                 )
             elif echo_id == ECHO_STATE:
                 self._handle_state_event(flags, buffer, offset, frame_size)
+            elif (
+                echo_id == ECHO_LOAD
+                and frame_size >= HEADER.size + DEVICE_LOAD_FIELDS.size
+            ):
+                timestamp_us, bus_load, _reserved, tx_ns, rx_ns = (
+                    DEVICE_LOAD_FIELDS.unpack_from(buffer, offset + HEADER.size)
+                )
+                self.last_bus_load = {
+                    "timestamp_us": timestamp_us,
+                    "bus_load_q15": bus_load,
+                    "tx_time_ns": tx_ns,
+                    "rx_time_ns": rx_ns,
+                }
             offset += frame_size
 
         trailing_data = buffer[offset:]

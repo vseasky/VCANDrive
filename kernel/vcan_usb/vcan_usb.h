@@ -2,8 +2,8 @@
 /*
  * VCAN USB protocol definitions for the Linux SocketCAN driver.
  *
- * Mirrors the on-wire protocol of the HPMicro VCAN firmware
- * (ref/firmware/vcan_0_0_2). VCAN frames are self-describing: every frame (data and
+ * Mirrors the on-wire protocol of the VCAN device firmware
+ * (ref/firmware/vcan_0_0_3). VCAN frames are self-describing: every frame (data and
  * control) starts with a common header { echo_id, opcode, flags }, where the
  * opcode encodes (channel << 12) | byte_size. The device exposes one USB
  * interface per CAN channel, each with its own bulk endpoint pair.

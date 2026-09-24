@@ -70,6 +70,49 @@ class VCanProtocolTest(unittest.TestCase):
         self.assertEqual(frames[0].data, payload)
         self.assertEqual(frames[0].channel, 1)
 
+    def test_fd_receive_reassembles_all_splits_including_full_speed_packets(self):
+        protocol = vcan_device
+        for dlc, size in enumerate(protocol.FD_DLC_LENGTHS):
+            packet = protocol.HEADER.pack(protocol.ECHO_RX, protocol.opcode(1, 88), protocol.FLAG_FD)
+            packet += protocol.CAN_FRAME_FIELDS.pack(0x123, dlc, 1234) + bytes(range(64))
+            for split in range(1, len(packet)):
+                with self.subTest(dlc=dlc, split=split):
+                    device = protocol.CanDevice(FakeAsyncDevice(), channel=1)
+                    self.assertEqual(list(device.parse_bulk(packet[:split])), [])
+                    frames = list(device.parse_bulk(packet[split:]))
+                    self.assertEqual(len(frames), 1)
+                    self.assertEqual(frames[0].data, bytes(range(size)))
+                    self.assertEqual(frames[0].timestamp_us, 1234)
+                    self.assertEqual(device._rx_tail, b'')
+
+    def test_fd_padded_bundles_preserve_sequence_and_payload(self):
+        # Firmware bundles end at a zero echo ID and are padded to FS MPS.
+        from tests.hardware_test import _message
+        protocol = vcan_device
+        for bundle_size in (1, 2, 5):
+            for split in (None, 64):
+                device = protocol.CanDevice(FakeAsyncDevice(), channel=1)
+                expected = [_message(1, n, True, False) for n in range(96)]
+                received = []
+                for first in range(0, len(expected), bundle_size):
+                    packet = b''
+                    for msg in expected[first:first + bundle_size]:
+                        flags = protocol.FLAG_FD | (protocol.FLAG_EFF if msg.is_extended_id else 0)
+                        packet += protocol.HEADER.pack(protocol.ECHO_RX, protocol.opcode(1, 88), flags)
+                        dlc = protocol.FD_DLC_LENGTHS.index(len(msg.data))
+                        packet += protocol.CAN_FRAME_FIELDS.pack(msg.arbitration_id, dlc, 0)
+                        packet += bytes(msg.data).ljust(64, b'\x00')
+                    packet += bytes(4)
+                    packet += bytes((-len(packet)) % 64)
+                    step = split or len(packet)
+                    for offset in range(0, len(packet), step):
+                        received.extend(device.parse_bulk(packet[offset:offset + step]))
+                self.assertEqual(len(received), len(expected))
+                for frame, msg in zip(received, expected):
+                    self.assertEqual(frame.data, msg.data)
+                    self.assertEqual(frame.extended, msg.is_extended_id)
+                self.assertEqual(device._rx_tail, b'')
+
 
 if __name__ == "__main__":
     unittest.main()

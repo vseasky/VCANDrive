@@ -34,7 +34,7 @@ class TestHelpersTest(unittest.TestCase):
         self.assertEqual(_arbitration_id(1), 0x101)
         self.assertEqual(_arbitration_id(2), 0x102)
 
-    @patch("tests._helpers.can.Bus", side_effect=FakeBus)
+    @patch("tests._helpers._backend_class", return_value=FakeBus)
     def test_shared_bus_terminates_only_physical_ends(self, bus_factory):
         buses = _open_buses(self.args(), fd=False, loopback=False)
 
@@ -43,7 +43,7 @@ class TestHelpersTest(unittest.TestCase):
             [True, False, True],
         )
 
-    @patch("tests._helpers.can.Bus", side_effect=FakeBus)
+    @patch("tests._helpers._backend_class", return_value=FakeBus)
     def test_loopback_terminates_every_isolated_channel(self, bus_factory):
         buses = _open_buses(self.args(), fd=False, loopback=True)
 
@@ -51,6 +51,22 @@ class TestHelpersTest(unittest.TestCase):
             [bus.kwargs["termination"] for bus in buses],
             [True, True, True],
         )
+
+    def test_both_backends_open_without_python_can_plugin_registration(self):
+        import importlib
+        import can.interfaces
+        for interface in ("vcan_usb", "vkgs_usb"):
+            args = self.args()
+            args.interface = interface
+            module = importlib.import_module(interface)
+            with self.subTest(interface=interface), \
+                    patch.dict(can.interfaces.BACKENDS, {}, clear=True), \
+                    patch("tests._helpers.can.Bus", side_effect=AssertionError("plugin factory used")), \
+                    patch.object(module, interface + "_bus", side_effect=FakeBus) as constructor:
+                buses = _open_buses(args, fd=False, loopback=False)
+                self.assertEqual(constructor.call_count, 3)
+                self.assertEqual([bus.kwargs["channel"] for bus in buses], [0, 1, 2])
+                self.assertTrue(all("interface" not in bus.kwargs for bus in buses))
 
     def test_shutdown_releases_in_reverse_order_and_clears_list(self):
         order = []

@@ -6,3 +6,13 @@ dist/
 .pytest_cache/
 hold-*.out
 hold-*.err
+
+# Local hardware results and release artifacts
+test-results/
+*.ota
+*.upd
+*.bin
+*.hex
+*.exe
+*.dll
+*.zip

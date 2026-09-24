@@ -10,10 +10,10 @@
 | Linux 安装/更新驱动 | [Linux 内核驱动安装](Linux内核驱动安装.md) | [SocketCAN 使用手册](SocketCAN使用手册.md) |
 | 使用 `candump`、`cansend` 或 C `PF_CAN` | [SocketCAN 使用手册](SocketCAN使用手册.md) | [`socket-can-skill`](../socket-can-skill/SKILL.md) |
 | Windows/Linux/macOS Python 自动化 | [PythonCAN 使用手册](PythonCAN使用手册.md) | [Python API 参考](PythonAPI参考.md) |
+| 查看设备身份并切换模式 | [设备管理器](设备管理器.md) | [PCAN 模式设备管理接口](PCAN设备管理.md) |
 | 使用命令行验收设备 | [Python 终端工具](Python终端工具.md) | [PythonCAN 使用手册](PythonCAN使用手册.md) |
 | 接入 CANopen 或 DBC | [CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md) | 两个项目 Skills |
 | 开发自定义 USB 上位机 | [驱动特殊 API 说明](驱动特殊API说明.md) | 固件协议实现 |
-| 查阅历史行为变更 | [优化记录](优化记录.md) | Git 历史 |
 
 ## 支持矩阵
 
@@ -21,7 +21,7 @@
 |---|---|---|---|
 | VCAN 原生 | `1d50:6080` | `vcan_usb` | `vcan-usb` / `vcan_usb` |
 | GS_USB / VKGS | `1d50:606f` | `vkgs_usb` | `vkgs-usb` / `vkgs_usb` |
-| PEAK 兼容 | 随硬件型号而定 | 本仓库不提供 | 本仓库不提供 |
+| PCAN 兼容 | 随设备配置而定 | 使用兼容驱动 | 使用[设备管理器](设备管理器.md)查看和切换模式 |
 
 固件、内核模块和 Python backend 必须匹配同一 USB 模式。`1d50:606f` 还可能被 Linux 主线 `gs_usb` 抢先绑定。
 
@@ -62,7 +62,5 @@ VCAN 硬件 USB interface
 - Linux 驱动：`../kernel/vcan_usb/`、`../kernel/vkgs_usb/`
 - Python backend：`../python-cli/vcan_usb/`、`../python-cli/vkgs_usb/`
 - CLI 与测试：`../python-cli/tools/`、`../python-cli/tests/`、`../kernel/tests/`
-- 同级固件：`../../03.FirmWare/Application/vcan/`
-- Sphinx 文档工程：`E:/Web/Sphinx/Sphinx/src/projects/vcan/`（维护环境参考路径）
 
-发布仓库中的相对路径以当前 `VCANDrive` 根目录为准；本机参考路径不应写进应用配置。
+上述相对路径均以当前 `VCANDrive` 根目录为准。

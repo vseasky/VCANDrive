@@ -3,8 +3,8 @@
  * VKGS USB (candleLight-compatible) protocol definitions for the Linux
  * SocketCAN driver.
  *
- * Mirrors the on-wire protocol of the HPMicro VEK gs_can firmware
- * (ref/firmware/vcan_0_0_2). The firmware is a standard gs_usb/candleLight device
+ * Mirrors the on-wire protocol of the GS_CAN device firmware
+ * (ref/firmware/vcan_0_0_3). The firmware is a standard gs_usb/candleLight device
  * that exposes one USB interface per CAN channel and adds a small set of
  * private vendor requests
  * (USB_MODE/CAN_FILTERS/CAN_BUS_LOAD/CAN_TERMINATION/BSP_DEVICE_INFO).

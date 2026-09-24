@@ -2,7 +2,7 @@
 /*
  * VCAN USB SocketCAN driver.
  *
- * Out-of-tree driver for the HPMicro VCAN firmware (ref/firmware/vcan_0_0_2). The
+ * Out-of-tree driver for the VCAN device firmware. The
  * device is a USB-CAN(FD) adapter that exposes ONE USB interface per CAN
  * channel (each with its own bulk endpoint pair) and speaks the self-describing
  * VCAN frame protocol: every frame starts with { echo_id, opcode, flags } where
@@ -20,8 +20,8 @@
  *     version/UID/UUID are read
  *     with the HAL-specific VCAN_USB_BREQ_BSP_DEVICE_INFO request.
  *   - HW timestamps are not used (RX frames still carry a device timestamp in
- *     the header, but it is ignored here), keeping the module buildable across
- *     5.x..6.x kernels (version guards cover termination / echo-len API diffs).
+ *     the header, but it is ignored here), keeping the receive path portable.
+ *     Compatibility helpers support upstream kernels from 4.12 onward.
  */
 
 #include <linux/can.h>
@@ -34,30 +34,22 @@
 #include <linux/netdevice.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
-#include <linux/version.h>
 
 #include "vcan_usb.h"
+#include "usbcan_compat.h"
 
-#define VCAN_USB_DRV_VERSION  "1.0.0"
+#define VCAN_USB_DRV_VERSION  "1.1.4"
 #define VCAN_USB_MAX_TX_URBS  10
 #define VCAN_USB_MAX_RX_URBS  30
 #define VCAN_USB_CTRL_TIMEOUT 1000
 #define VCAN_USB_MODE_SETTLE_MS 150
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-#define VCAN_USB_HAS_ECHO_FRAME_LEN 1
-#define VCAN_USB_HAS_TERMINATION_API 1
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-#define VCAN_USB_HAS_NETDEV_MTU_RANGE 1
-#endif
 
 struct vcan_usb;
 
 struct vcan_usb_tx_ctx {
 	struct vcan_usb *dev;
 	u32 echo_id;
+	u8 data_len;
 };
 
 struct vcan_usb {
@@ -79,45 +71,35 @@ struct vcan_usb {
 	struct usb_anchor rx_submitted;
 	atomic_t active_tx_urbs;
 	spinlock_t tx_ctx_lock;
+	spinlock_t stats_lock;
 	struct vcan_usb_tx_ctx tx_context[VCAN_USB_MAX_TX_URBS];
 
 	struct can_berr_counter bec;
 	bool termination;
+	bool rx_running;
 };
 
-/* ---- compat helpers ---------------------------------------------------- */
-
-static inline void vcan_usb_put_echo_skb(struct sk_buff *skb,
-					 struct net_device *ndev,
-					 unsigned int idx, unsigned int len)
+static void vcan_usb_account_rx(struct vcan_usb *dev, unsigned int len,
+				bool overflow)
 {
-#ifdef VCAN_USB_HAS_ECHO_FRAME_LEN
-	can_put_echo_skb(skb, ndev, idx, len);
-#else
-	(void)len;
-	can_put_echo_skb(skb, ndev, idx);
-#endif
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->stats_lock, flags);
+	dev->netdev->stats.rx_packets++;
+	dev->netdev->stats.rx_bytes += len;
+	if (overflow)
+		dev->netdev->stats.rx_over_errors++;
+	spin_unlock_irqrestore(&dev->stats_lock, flags);
 }
 
-static inline unsigned int vcan_usb_get_echo_skb(struct net_device *ndev,
-						 unsigned int idx)
+static void vcan_usb_account_tx(struct vcan_usb *dev, unsigned int len)
 {
-#ifdef VCAN_USB_HAS_ECHO_FRAME_LEN
-	return can_get_echo_skb(ndev, idx, NULL);
-#else
-	can_get_echo_skb(ndev, idx);
-	return 0;
-#endif
-}
+	unsigned long flags;
 
-static inline void vcan_usb_free_echo_skb(struct net_device *ndev,
-					  unsigned int idx)
-{
-#ifdef VCAN_USB_HAS_ECHO_FRAME_LEN
-	can_free_echo_skb(ndev, idx, NULL);
-#else
-	can_free_echo_skb(ndev, idx);
-#endif
+	spin_lock_irqsave(&dev->stats_lock, flags);
+	dev->netdev->stats.tx_packets++;
+	dev->netdev->stats.tx_bytes += len;
+	spin_unlock_irqrestore(&dev->stats_lock, flags);
 }
 
 /* ---- TX context bookkeeping ------------------------------------------- */
@@ -141,7 +123,12 @@ static struct vcan_usb_tx_ctx *vcan_usb_alloc_tx_ctx(struct vcan_usb *dev)
 
 static void vcan_usb_free_tx_ctx(struct vcan_usb_tx_ctx *ctx)
 {
+	struct vcan_usb *dev = ctx->dev;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->tx_ctx_lock, flags);
 	ctx->echo_id = VCAN_USB_MAX_TX_URBS;
+	spin_unlock_irqrestore(&dev->tx_ctx_lock, flags);
 }
 
 static void vcan_usb_init_tx_ctx(struct vcan_usb *dev)
@@ -371,6 +358,15 @@ static void vcan_usb_handle_state(struct vcan_usb *dev,
 	dev->bec.txerr = le32_to_cpu(st->txerr);
 	vcan_usb_set_state(dev, state);
 
+	/* ERROR_ACTIVE is the normal operating state, not a CAN error.  State
+	 * recovery and duplicate STOPPED/ACTIVE notifications must not be exposed
+	 * as empty CAN_ERR_FLAG frames to SocketCAN applications.
+	 */
+	if (state != VCAN_USB_CAN_STATE_BUS_OFF &&
+	    state != VCAN_USB_CAN_STATE_ERROR_PASSIVE &&
+	    state != VCAN_USB_CAN_STATE_ERROR_WARNING)
+		return;
+
 	skb = alloc_can_err_skb(ndev, &cf);
 	if (!skb)
 		return;
@@ -379,11 +375,18 @@ static void vcan_usb_handle_state(struct vcan_usb *dev,
 		cf->can_id |= CAN_ERR_BUSOFF;
 	} else if (state == VCAN_USB_CAN_STATE_ERROR_PASSIVE) {
 		cf->can_id |= CAN_ERR_CRTL;
-		cf->data[1] |= CAN_ERR_CRTL_RX_PASSIVE | CAN_ERR_CRTL_TX_PASSIVE;
+		if (dev->bec.rxerr >= 128)
+			cf->data[1] |= CAN_ERR_CRTL_RX_PASSIVE;
+		if (dev->bec.txerr >= 128)
+			cf->data[1] |= CAN_ERR_CRTL_TX_PASSIVE;
 	} else if (state == VCAN_USB_CAN_STATE_ERROR_WARNING) {
 		cf->can_id |= CAN_ERR_CRTL;
-		cf->data[1] |= CAN_ERR_CRTL_RX_WARNING | CAN_ERR_CRTL_TX_WARNING;
+		if (dev->bec.rxerr >= 96)
+			cf->data[1] |= CAN_ERR_CRTL_RX_WARNING;
+		if (dev->bec.txerr >= 96)
+			cf->data[1] |= CAN_ERR_CRTL_TX_WARNING;
 	}
+	cf->can_id |= CAN_ERR_CNT;
 	cf->data[6] = dev->bec.txerr;
 	cf->data[7] = dev->bec.rxerr;
 
@@ -408,6 +411,12 @@ static void vcan_usb_handle_berr(struct vcan_usb *dev,
 	dev->bec.txerr = be->tx_error_count;
 
 	if (!(dev->can.ctrlmode & CAN_CTRLMODE_BERR_REPORTING))
+		return;
+	/* Firmware may send a BERR snapshot while the controller recovers.  NONE
+	 * and NO_CHANGE carry counters only and are not protocol violations.
+	 */
+	if (be->error_code == VCAN_USB_ERROR_CODE_NONE ||
+	    be->error_code == VCAN_USB_ERROR_CODE_NO_CHANGE)
 		return;
 
 	skb = alloc_can_err_skb(ndev, &cf);
@@ -453,18 +462,39 @@ static void vcan_usb_handle_rx_frame(struct vcan_usb *dev,
 {
 	struct net_device *ndev = dev->netdev;
 	u16 flags = le16_to_cpu(hf->hdr.flags);
-	u32 raw_id = le32_to_cpu(hf->can_id);
+	u32 raw_id;
 	bool is_fd = flags & VCAN_USB_FLAG_FD;
 	struct canfd_frame *cfd;
 	struct can_frame *cf;
 	struct sk_buff *skb;
 	unsigned int len;
 
+	if (size < VCAN_USB_FRAME_DATA_OFFSET) {
+		ndev->stats.rx_length_errors++;
+		ndev->stats.rx_dropped++;
+		return;
+	}
+	raw_id = le32_to_cpu(hf->can_id);
+
+	if (is_fd && (flags & VCAN_USB_FLAG_RTR)) {
+		ndev->stats.rx_frame_errors++;
+		ndev->stats.rx_dropped++;
+		return;
+	}
+
 	if (is_fd) {
-		skb = alloc_canfd_skb(ndev, &cfd);
-		if (!skb)
+		len = usbcan_fd_dlc2len(hf->dlc & 0x0f);
+		if (size < VCAN_USB_FRAME_DATA_OFFSET + len) {
+			ndev->stats.rx_length_errors++;
+			ndev->stats.rx_dropped++;
 			return;
-		cfd->len = can_fd_dlc2len(hf->dlc & 0x0f);
+		}
+		skb = alloc_canfd_skb(ndev, &cfd);
+		if (!skb) {
+			ndev->stats.rx_dropped++;
+			return;
+		}
+		cfd->len = len;
 		cfd->can_id = (flags & VCAN_USB_FLAG_EFF) ?
 			(raw_id & VCAN_USB_ID_MASK_EXT) | CAN_EFF_FLAG :
 			raw_id & VCAN_USB_ID_MASK_STD;
@@ -474,13 +504,21 @@ static void vcan_usb_handle_rx_frame(struct vcan_usb *dev,
 			cfd->flags |= CANFD_BRS;
 		if (flags & VCAN_USB_FLAG_ESI)
 			cfd->flags |= CANFD_ESI;
-		if (size >= VCAN_USB_FRAME_DATA_OFFSET + cfd->len)
-			memcpy(cfd->data, hf->data, cfd->len);
+		memcpy(cfd->data, hf->data, cfd->len);
 		len = cfd->len;
 	} else {
-		skb = alloc_can_skb(ndev, &cf);
-		if (!skb)
+		len = usbcan_cc_dlc2len(hf->dlc & 0x0f);
+		if (!(flags & VCAN_USB_FLAG_RTR) &&
+		    size < VCAN_USB_FRAME_DATA_OFFSET + len) {
+			ndev->stats.rx_length_errors++;
+			ndev->stats.rx_dropped++;
 			return;
+		}
+		skb = alloc_can_skb(ndev, &cf);
+		if (!skb) {
+			ndev->stats.rx_dropped++;
+			return;
+		}
 		cf->can_id = (flags & VCAN_USB_FLAG_EFF) ?
 			(raw_id & VCAN_USB_ID_MASK_EXT) | CAN_EFF_FLAG :
 			raw_id & VCAN_USB_ID_MASK_STD;
@@ -488,18 +526,13 @@ static void vcan_usb_handle_rx_frame(struct vcan_usb *dev,
 			cf->can_id |= CAN_RTR_FLAG;
 		if (flags & VCAN_USB_FLAG_ERR)
 			cf->can_id |= CAN_ERR_FLAG;
-		cf->len = can_cc_dlc2len(hf->dlc & 0x0f);
-		if (!(cf->can_id & CAN_RTR_FLAG) &&
-		    size >= VCAN_USB_FRAME_DATA_OFFSET + cf->len)
+		cf->len = len;
+		if (!(cf->can_id & CAN_RTR_FLAG))
 			memcpy(cf->data, hf->data, cf->len);
-		len = cf->len;
+		len = (cf->can_id & CAN_RTR_FLAG) ? 0 : cf->len;
 	}
 
-	if (flags & VCAN_USB_FLAG_OVERFLOW)
-		ndev->stats.rx_over_errors++;
-
-	ndev->stats.rx_packets++;
-	ndev->stats.rx_bytes += len;
+	vcan_usb_account_rx(dev, len, flags & VCAN_USB_FLAG_OVERFLOW);
 	netif_rx(skb);
 }
 
@@ -520,6 +553,14 @@ static void vcan_usb_parse_bulk(struct vcan_usb *dev, const u8 *buf, int len)
 		u32 echo_id = le32_to_cpu(hdr->echo_id);
 		u16 flags = le16_to_cpu(hdr->flags);
 		u16 size = VCAN_USB_OPCODE_SIZE(opcode);
+
+		/* Firmware appends a four-byte zero sentinel, then rounds the
+		 * transfer up to the USB packet size.  Bytes after the sentinel
+		 * are padding and may contain stale FIFO data, so do not try to
+		 * parse them as another protocol frame.
+		 */
+		if (!echo_id)
+			break;
 
 		/* opcode size is authoritative; an out-of-range size means the
 		 * stream is corrupt and we can no longer trust the stride.
@@ -580,7 +621,8 @@ static void vcan_usb_read_bulk_callback(struct urb *urb)
 
 	switch (urb->status) {
 	case 0:
-		if (netif_running(ndev) && netif_device_present(ndev))
+		if (READ_ONCE(dev->rx_running) && netif_running(ndev) &&
+		    netif_device_present(ndev))
 			vcan_usb_parse_bulk(dev, urb->transfer_buffer,
 					    urb->actual_length);
 		break;
@@ -593,16 +635,22 @@ static void vcan_usb_read_bulk_callback(struct urb *urb)
 		break;
 	}
 
-	if (!netif_device_present(ndev))
+	if (!READ_ONCE(dev->rx_running) || !netif_device_present(ndev))
 		return;
 
 	usb_fill_bulk_urb(urb, dev->udev, dev->pipe_in, urb->transfer_buffer,
 			  dev->rx_buf_sz, vcan_usb_read_bulk_callback, dev);
+	/* USB core unanchors before invoking the completion callback. */
+	usb_anchor_urb(urb, &dev->rx_submitted);
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
-	if (ret == -ENODEV)
-		netif_device_detach(ndev);
-	else if (ret)
-		netdev_warn(ndev, "rx urb resubmit failed: %d\n", ret);
+	if (ret) {
+		usb_unanchor_urb(urb);
+		ndev->stats.rx_errors++;
+		if (ret == -ENODEV)
+			netif_device_detach(ndev);
+		else
+			netdev_warn(ndev, "rx urb resubmit failed: %d\n", ret);
+	}
 }
 
 /* ---- TX --------------------------------------------------------------- */
@@ -613,31 +661,33 @@ static void vcan_usb_write_bulk_callback(struct urb *urb)
 	struct vcan_usb *dev = ctx->dev;
 	struct net_device *ndev = dev->netdev;
 	unsigned int idx = ctx->echo_id;
-
-	if (!netif_device_present(ndev))
-		return;
+	unsigned int echo_len;
 
 	switch (urb->status) {
 	case 0:
 		/* The firmware sends no TX echo, so complete here. */
-		ndev->stats.tx_packets++;
-		ndev->stats.tx_bytes += vcan_usb_get_echo_skb(ndev, idx);
+		echo_len = usbcan_get_echo_skb(ndev, idx);
+		vcan_usb_account_tx(dev, ctx->data_len);
+		(void)echo_len;
 		break;
 	case -ENOENT:
 	case -ECONNRESET:
 	case -ESHUTDOWN:
-		vcan_usb_free_echo_skb(ndev, idx);
+		usbcan_free_echo_skb(ndev, idx);
 		break;
 	default:
-		vcan_usb_free_echo_skb(ndev, idx);
+		usbcan_free_echo_skb(ndev, idx);
 		ndev->stats.tx_errors++;
 		netdev_warn(ndev, "tx urb failed: %d\n", urb->status);
 		break;
 	}
 
 	vcan_usb_free_tx_ctx(ctx);
-	atomic_dec(&dev->active_tx_urbs);
-	netif_wake_queue(ndev);
+	/* Full barrier pairs with the stop/recheck in start_xmit(). */
+	atomic_dec_return(&dev->active_tx_urbs);
+	if (netif_running(ndev) && netif_device_present(ndev) &&
+	    netif_carrier_ok(ndev) && netif_queue_stopped(ndev))
+		netif_wake_queue(ndev);
 }
 
 static netdev_tx_t vcan_usb_start_xmit(struct sk_buff *skb,
@@ -687,11 +737,25 @@ static netdev_tx_t vcan_usb_start_xmit(struct sk_buff *skb,
 	}
 	if (can_id & CAN_RTR_FLAG)
 		fl |= VCAN_USB_FLAG_RTR;
+	if (can_id & CAN_ERR_FLAG)
+		fl |= VCAN_USB_FLAG_ERR;
 
 	ctx = vcan_usb_alloc_tx_ctx(dev);
-	if (!ctx)
+	if (!ctx) {
+		/* Keep qdisc backpressure asserted until a completion releases a
+		 * context.  Returning BUSY without stopping the queue can hot-loop.
+		 */
+		netif_stop_queue(netdev);
+		smp_mb();
+		/* Close the stop/completion race: a completion that ran immediately
+		 * before stop_queue() could not observe the stopped queue to wake it.
+		 */
+		if (atomic_read(&dev->active_tx_urbs) < VCAN_USB_MAX_TX_URBS)
+			netif_wake_queue(netdev);
 		return NETDEV_TX_BUSY;
+	}
 	idx = ctx->echo_id;
+	ctx->data_len = (can_id & CAN_RTR_FLAG) ? 0 : data_len;
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb)
@@ -713,7 +777,8 @@ static netdev_tx_t vcan_usb_start_xmit(struct sk_buff *skb,
 	hf->hdr.opcode = cpu_to_le16(VCAN_USB_OPCODE(dev->channel, frame_len));
 	hf->hdr.flags = cpu_to_le16(fl);
 	hf->can_id = cpu_to_le32(raw_id);
-	hf->dlc = is_fd ? can_fd_len2dlc(data_len) : (u8)data_len;
+	hf->dlc = is_fd ? usbcan_fd_len2dlc(data_len) :
+			    usbcan_get_cc_dlc(cf, dev->can.ctrlmode);
 	if (!(can_id & CAN_RTR_FLAG))
 		memcpy(hf->data, is_fd ? cfd->data : cf->data, data_len);
 
@@ -722,12 +787,19 @@ static netdev_tx_t vcan_usb_start_xmit(struct sk_buff *skb,
 	urb->transfer_flags |= URB_FREE_BUFFER;
 	usb_anchor_urb(urb, &dev->tx_submitted);
 
-	vcan_usb_put_echo_skb(skb, netdev, idx, data_len);
+	ret = usbcan_put_echo_skb(skb, netdev, idx, data_len);
+	if (unlikely(ret)) {
+		usb_unanchor_urb(urb);
+		usb_free_urb(urb);
+		vcan_usb_free_tx_ctx(ctx);
+		stats->tx_dropped++;
+		return NETDEV_TX_OK;
+	}
 	atomic_inc(&dev->active_tx_urbs);
 
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
 	if (unlikely(ret)) {
-		vcan_usb_free_echo_skb(netdev, idx);
+		usbcan_free_echo_skb(netdev, idx);
 		atomic_dec(&dev->active_tx_urbs);
 		usb_unanchor_urb(urb);
 		usb_free_urb(urb);
@@ -742,8 +814,12 @@ static netdev_tx_t vcan_usb_start_xmit(struct sk_buff *skb,
 	}
 
 	usb_free_urb(urb);
-	if (atomic_read(&dev->active_tx_urbs) >= VCAN_USB_MAX_TX_URBS)
+	if (atomic_read(&dev->active_tx_urbs) >= VCAN_USB_MAX_TX_URBS) {
 		netif_stop_queue(netdev);
+		smp_mb();
+		if (atomic_read(&dev->active_tx_urbs) < VCAN_USB_MAX_TX_URBS)
+			netif_wake_queue(netdev);
+	}
 	return NETDEV_TX_OK;
 
 nomem_hf:
@@ -805,9 +881,6 @@ static int vcan_usb_open(struct net_device *netdev)
 
 	vcan_usb_init_tx_ctx(dev);
 	atomic_set(&dev->active_tx_urbs, 0);
-	ret = vcan_usb_alloc_rx_urbs(dev);
-	if (ret)
-		goto err_rx;
 	ret = vcan_usb_set_mode_cmd(dev, VCAN_USB_CHANNEL_MODE_RESET, 0);
 	if (ret)
 		goto err_rx;
@@ -835,6 +908,15 @@ static int vcan_usb_open(struct net_device *netdev)
 	if (ret)
 		goto err_rx;
 
+	/* Arm reception only after stale device state has been reset and every
+	 * control setting is committed. This prevents old queued frames from being
+	 * delivered while ndo_open() is still configuring the controller.
+	 */
+	WRITE_ONCE(dev->rx_running, true);
+	ret = vcan_usb_alloc_rx_urbs(dev);
+	if (ret)
+		goto err_rx;
+
 	dev->can.state = CAN_STATE_ERROR_ACTIVE;
 	ret = vcan_usb_set_mode_cmd(dev, VCAN_USB_CHANNEL_MODE_START,
 				    vcan_usb_start_flags(dev));
@@ -847,6 +929,7 @@ static int vcan_usb_open(struct net_device *netdev)
 	return 0;
 
 err_rx:
+	WRITE_ONCE(dev->rx_running, false);
 	usb_kill_anchored_urbs(&dev->rx_submitted);
 	vcan_usb_set_mode_cmd(dev, VCAN_USB_CHANNEL_MODE_RESET, 0);
 	vcan_usb_host_format(dev);
@@ -859,9 +942,10 @@ static int vcan_usb_stop(struct net_device *netdev)
 	struct vcan_usb *dev = netdev_priv(netdev);
 
 	netif_stop_queue(netdev);
+	WRITE_ONCE(dev->rx_running, false);
+	usb_kill_anchored_urbs(&dev->tx_submitted);
 	vcan_usb_set_mode_cmd(dev, VCAN_USB_CHANNEL_MODE_RESET, 0);
 	vcan_usb_host_format(dev);
-	usb_kill_anchored_urbs(&dev->tx_submitted);
 	atomic_set(&dev->active_tx_urbs, 0);
 	usb_kill_anchored_urbs(&dev->rx_submitted);
 	dev->can.state = CAN_STATE_STOPPED;
@@ -883,7 +967,7 @@ static int vcan_usb_set_mode(struct net_device *netdev, enum can_mode mode)
 	}
 }
 
-/* rx/tx error counters are kept current by the STATE/BERR event frames the
+/* rx/tx error counters are cached from the STATE/BERR event frames the
  * device pushes on its own (vcan_usb_handle_state()/vcan_usb_handle_berr()),
  * so this can return the cache instead of paying for a synchronous control
  * transfer on every call (this is on the hot path for e.g.
@@ -898,7 +982,6 @@ static int vcan_usb_get_berr_counter(const struct net_device *netdev,
 	return 0;
 }
 
-#ifdef VCAN_USB_HAS_TERMINATION_API
 static const u16 vcan_usb_termination_const[] = {
 	VCAN_USB_TERMINATION_OFF,
 	VCAN_USB_TERMINATION_ON,
@@ -907,11 +990,14 @@ static const u16 vcan_usb_termination_const[] = {
 static int vcan_usb_set_termination(struct net_device *netdev, u16 term)
 {
 	struct vcan_usb *dev = netdev_priv(netdev);
+	bool enable = term == VCAN_USB_TERMINATION_ON;
+	int ret;
 
-	dev->termination = term == VCAN_USB_TERMINATION_ON;
-	return vcan_usb_set_termination_cmd(dev, dev->termination);
+	ret = vcan_usb_set_termination_cmd(dev, enable);
+	if (!ret)
+		dev->termination = enable;
+	return ret;
 }
-#endif
 
 static const struct net_device_ops vcan_usb_netdev_ops = {
 	.ndo_open = vcan_usb_open,
@@ -946,17 +1032,15 @@ static void vcan_usb_log_device_info(struct vcan_usb *dev,
 	hw_version = le32_to_cpu(info->hw_version);
 
 	dev_info(&dev->intf->dev,
-		 "ch%u device info: sw=v%u.%u.%u hw=v%u.%u.%u "
-		 "uid=%08x%08x%08x%08x uuid=%08x%08x%08x%08x\n",
+		 "ch%u device info: sw=v%u.%u.%u "
+		 "hw=v%u.%u isolated=%u usb=%s\n",
 		 dev->channel,
 		 (sw_version >> 16) & 0xff, (sw_version >> 8) & 0xff,
 		 sw_version & 0xff,
-		 (hw_version >> 16) & 0xff, (hw_version >> 8) & 0xff,
-		 hw_version & 0xff, le32_to_cpu(info->uid[0]),
-		 le32_to_cpu(info->uid[1]), le32_to_cpu(info->uid[2]),
-		 le32_to_cpu(info->uid[3]), le32_to_cpu(info->uuid[0]),
-		 le32_to_cpu(info->uuid[1]), le32_to_cpu(info->uuid[2]),
-		 le32_to_cpu(info->uuid[3]));
+		 (hw_version >> 8) & 0xff, hw_version & 0xff,
+		 !!((hw_version >> 24) & 0x01),
+		 dev->udev->speed == USB_SPEED_HIGH ? "HS" :
+		 dev->udev->speed == USB_SPEED_FULL ? "FS" : "other");
 }
 
 static int vcan_usb_probe(struct usb_interface *intf,
@@ -995,6 +1079,7 @@ static int vcan_usb_probe(struct usb_interface *intf,
 	init_usb_anchor(&dev->tx_submitted);
 	init_usb_anchor(&dev->rx_submitted);
 	spin_lock_init(&dev->tx_ctx_lock);
+	spin_lock_init(&dev->stats_lock);
 	vcan_usb_init_tx_ctx(dev);
 
 	usb_set_intfdata(intf, dev);
@@ -1071,21 +1156,17 @@ static int vcan_usb_probe(struct usb_interface *intf,
 
 	if (!vcan_usb_get_termination(dev, &term))
 		dev->termination = term;
-#ifdef VCAN_USB_HAS_TERMINATION_API
 	dev->can.termination_const = vcan_usb_termination_const;
 	dev->can.termination_const_cnt = ARRAY_SIZE(vcan_usb_termination_const);
 	dev->can.termination = dev->termination ? VCAN_USB_TERMINATION_ON :
 						  VCAN_USB_TERMINATION_OFF;
 	dev->can.do_set_termination = vcan_usb_set_termination;
-#endif
 
 	dev->rx_buf_sz = ALIGN(VCAN_USB_FRAME_DATA_OFFSET + 64,
 			       usb_maxpacket(udev, dev->pipe_in));
 
-#ifdef VCAN_USB_HAS_NETDEV_MTU_RANGE
 	netdev->min_mtu = CAN_MTU;
 	netdev->max_mtu = (feature & VCAN_USB_FEATURE_FD) ? CANFD_MTU : CAN_MTU;
-#endif
 
 	ret = register_candev(netdev);
 	if (ret) {
@@ -1113,6 +1194,8 @@ static void vcan_usb_disconnect(struct usb_interface *intf)
 	if (!dev)
 		return;
 
+	netif_device_detach(dev->netdev);
+	WRITE_ONCE(dev->rx_running, false);
 	unregister_candev(dev->netdev);
 	usb_kill_anchored_urbs(&dev->tx_submitted);
 	usb_kill_anchored_urbs(&dev->rx_submitted);
@@ -1135,6 +1218,6 @@ static struct usb_driver vcan_usb_driver = {
 module_usb_driver(vcan_usb_driver);
 
 MODULE_AUTHOR("VEK");
-MODULE_DESCRIPTION("HPMicro VCAN USB CAN-FD driver");
+MODULE_DESCRIPTION("VCAN USB CAN-FD driver");
 MODULE_VERSION(VCAN_USB_DRV_VERSION);
 MODULE_LICENSE("GPL");

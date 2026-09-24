@@ -1,4 +1,4 @@
-"""VKGS/gs_usb wire protocol implementation (firmware V_0_0_2)."""
+"""VKGS/gs_usb wire protocol implementation (firmware V_0_0_3)."""
 
 from __future__ import annotations
 
@@ -17,30 +17,29 @@ VID = 0x1D50
 PID = 0x606F
 TIMEOUT_MS = 2_000
 
-# Firmware scheduling delays validated against V_0_0_2. These are firmware
-# constraints, not tunables: the device's main loop only drains its USB
-# staging FIFO on a fixed schedule, so a shorter delay here does not speed
-# anything up, it just risks racing a request the firmware has not applied
-# yet. BULK_OUT_READY_S + CAN_TX_SETTLE_S together cap steady-state TX
-# throughput at roughly 1 / (BULK_OUT_READY_S + CAN_TX_SETTLE_S) ~= 66
-# frames/s per channel, and MODE_TRANSITION_SETTLE_S adds ~2x its value
-# (300 ms) to every start()/stop() cycle; see docs/PythonCAN使用手册.md.
+# Control/mode transitions still require settling; data OUT uses USB backpressure.
 CONTROL_SETTLE_S = 0.005
-BULK_OUT_READY_S = 0.005
-CAN_TX_SETTLE_S = 0.01
 MODE_TRANSITION_SETTLE_S = 0.15
 
 # Standard gs_usb and firmware-extension request identifiers.
 BREQ_HOST_FORMAT = 0
 BREQ_BITTIMING = 1
 BREQ_MODE = 2
+BREQ_BERR = 3
+BREQ_BT_CONST = 4
+BREQ_DEVICE_CONFIG = 5
+BREQ_TIMESTAMP = 6
+BREQ_IDENTIFY = 7
+BREQ_GET_USER_ID = 8
+BREQ_SET_USER_ID = 9
 BREQ_DATA_BITTIMING = 10
+BREQ_BT_CONST_EXT = 11
 BREQ_SET_TERMINATION = 12
 BREQ_GET_TERMINATION = 13
 BREQ_GET_STATE = 14
-BREQ_IDENTIFY = 7
 BREQ_BSP_DEVICE_INFO = 33
 BREQ_USB_MODE = 34
+BREQ_CAN_FILTERS = 35
 BREQ_CAN_BUS_LOAD = 36
 BREQ_CAN_TERMINATION = 37
 
@@ -54,12 +53,15 @@ CAN_STATE_STOPPED = 4
 CAN_STATE_SLEEPING = 5
 
 # vkgs_usb_berr_ext.error_code (protocol-violation reason).
+ERROR_CODE_NONE = 0
 ERROR_CODE_STUFF = 1
 ERROR_CODE_FORM = 2
 ERROR_CODE_ACK = 3
 ERROR_CODE_BIT1 = 4
 ERROR_CODE_BIT0 = 5
 ERROR_CODE_CRC = 6
+ERROR_CODE_NO_CHANGE = 7
+ERROR_CODE_UNKNOWN = 127
 
 # Device and USB personality modes.
 MODE_RESET = 0
@@ -73,6 +75,7 @@ MODE_LOOPBACK = 1 << 1
 MODE_HW_TIMESTAMP = 1 << 4
 MODE_FD = 1 << 8
 MODE_FD_NON_ISO = 1 << 9
+FLAG_OVERFLOW = 1 << 0
 FLAG_FD = 1 << 1
 FLAG_BRS = 1 << 2
 FLAG_ESI = 1 << 3
@@ -101,6 +104,7 @@ CAN_STATE_FIELDS = struct.Struct("<QIII")
 # vkgs_usb_berr_ext fields following EVENT_HEADER: error_flag, error_code,
 # rx_error_count, tx_error_count, error_logging_count, 3 reserved bytes.
 DEVICE_BERR_FIELDS = struct.Struct("<BBBBB3x")
+DEVICE_LOAD_FIELDS = struct.Struct("<QHHII")
 FD_DLC_LENGTHS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64)
 
 _CONTROL_REQUEST_OUT = 0x41
@@ -149,9 +153,14 @@ class CanFrame:
     channel: int = 0
     fd: bool = False
     brs: bool = False
+    esi: bool = False
     extended: bool = False
     rtr: bool = False
+    error: bool = False
+    overflow: bool = False
     timestamp_us: int = 0
+    # Remote frames carry a requested DLC but no data.
+    dlc: int | None = None
 
 
 def list_devices(vid: int = VID, pid: int = PID) -> list[Any]:
@@ -214,6 +223,7 @@ class CanDevice:
         self.can_state = CAN_STATE_STOPPED
         self.bec = {"rxerr": 0, "txerr": 0}
         self.last_berr: dict[str, int] | None = None
+        self.last_bus_load: dict[str, int] | None = None
 
         # A composite device is configured once, not once per CAN interface.
         # Reissuing SET_CONFIGURATION after another interface has been claimed
@@ -271,7 +281,7 @@ class CanDevice:
             )
 
         # Firmware applies these requests from its main loop. The delay is a
-        # protocol requirement; logging must not accidentally provide it.
+        # compatibility guard; logging must not accidentally provide it.
         time.sleep(CONTROL_SETTLE_S)
 
     def get_control(self, request: int, size: int, value: int = 0) -> bytes:
@@ -298,16 +308,58 @@ class CanDevice:
             )
         return response
 
+    def capabilities(self) -> dict[str, Any]:
+        """Read channel capabilities rather than identifying an MCU by version."""
+        values = struct.unpack("<10I", self.get_control(BREQ_BT_CONST, 40))
+        feature, clock_hz = values[:2]
+        nominal = values[2:]
+        data = None
+        if feature & (1 << 8):
+            if not feature & (1 << 10):
+                raise ProtocolError("FD advertised without extended bit-timing limits")
+            extended = struct.unpack("<18I", self.get_control(BREQ_BT_CONST_EXT, 72))
+            if extended[1] != clock_hz:
+                raise ProtocolError("inconsistent nominal/data clock")
+            data = extended[10:]
+        return {"feature": feature, "clock_hz": clock_hz,
+                "fd": bool(feature & (1 << 8)), "nominal": nominal, "data": data}
+
     def info(self) -> dict[str, Any]:
         """Read firmware, hardware, and device identity information."""
         response = self.get_control(BREQ_BSP_DEVICE_INFO, 40)
         values = DEVICE_INFO_FIELDS.unpack(response)
-        return {
-            "sw_version": values[0],
-            "hw_version": values[1],
+        sw_version, raw_hw_version = values[:2]
+        hw_flags = raw_hw_version >> 24 & 0x01
+        hw_version = raw_hw_version & 0xFFFF
+        max_packet_size = int(getattr(self.ep_out, "wMaxPacketSize", 0))
+        usb_speed = (
+            "unknown" if not max_packet_size else
+            "SS" if max_packet_size > 512 else
+            "HS" if max_packet_size > 64 else "FS"
+        )
+        result = {
+            "sw_version": sw_version,
+            "sw_version_text": (
+                f"v{sw_version >> 16 & 0xff}."
+                f"{sw_version >> 8 & 0xff}.{sw_version & 0xff}"
+            ),
+            "raw_hw_version": raw_hw_version,
+            "ota_magic": (raw_hw_version >> 16) & 0xFF,
+            "sw_version_full_text": "v" + ".".join(
+                str((sw_version >> shift) & 0xFF) for shift in (24, 16, 8, 0)),
+            "hw_version": hw_version,
+            "hw_version_text": f"v{hw_version >> 8 & 0xff}.{hw_version & 0xff}",
+            "hw_flags": hw_flags,
+            "hw_isolated": bool(hw_flags & 0x01),
+            "hw_revision_major": hw_version >> 8 & 0xFF,
+            "hw_revision_minor": hw_version & 0xFF,
+            "usb_speed": usb_speed,
             "uid": list(values[2:6]),
             "uuid": list(values[6:10]),
         }
+        result["uid_hex"] = "".join(f"{word:08x}" for word in result["uid"])
+        result["uuid_hex"] = "".join(f"{word:08x}" for word in result["uuid"])
+        return result
 
     def host_format(self) -> None:
         """Restore the gs_usb host byte-order handshake."""
@@ -396,7 +448,12 @@ class CanDevice:
         request = BREQ_DATA_BITTIMING if data else BREQ_BITTIMING
         self.set_control(request, payload)
 
-    def send(self, frame: CanFrame, echo_id: int = 0) -> None:
+    def send(
+        self,
+        frame: CanFrame,
+        echo_id: int = 0,
+        timeout_ms: int | None = None,
+    ) -> None:
         """Encode and write one CAN frame."""
         # Match vkgs_usb.c exactly: classic-only mode allocates 8 data bytes.
         # Once FD mode is active, every host-frame allocation remains 64 bytes,
@@ -406,14 +463,21 @@ class CanDevice:
             if self.fd_mode_enabled or frame.fd
             else _CLASSIC_FRAME_WIDTH
         )
-        dlc = length_to_dlc(len(frame.data), frame.fd)
+        if frame.fd and frame.rtr:
+            raise ValueError("CAN FD does not support remote frames")
+        dlc = length_to_dlc(
+            frame.dlc if frame.rtr and frame.dlc is not None else len(frame.data),
+            frame.fd,
+        )
         padded_length = dlc_to_length(dlc, frame.fd)
 
         can_id = frame.can_id
         can_id |= CAN_EFF if frame.extended else 0
         can_id |= CAN_RTR if frame.rtr else 0
+        can_id |= CAN_ERR if frame.error else 0
         flags = FLAG_FD if frame.fd else 0
         flags |= FLAG_BRS if frame.brs else 0
+        flags |= FLAG_ESI if frame.esi else 0
 
         packet = HOST_HEADER.pack(
             echo_id,
@@ -429,12 +493,11 @@ class CanDevice:
 
         # The device rearms OUT from its main-loop flush path, independently
         # of successful control-transfer completion.
-        time.sleep(BULK_OUT_READY_S)
         try:
             bytes_written = self.dev.write(
                 self.ep_out.bEndpointAddress,
                 packet,
-                timeout=self.timeout,
+                timeout=self.timeout if timeout_ms is None else timeout_ms,
             )
         except usb.core.USBError as exc:
             if not isinstance(exc, usb.core.USBTimeoutError):
@@ -447,7 +510,6 @@ class CanDevice:
             raise ProtocolError(
                 f"short bulk OUT write: {bytes_written}/{len(packet)}"
             )
-        time.sleep(CAN_TX_SETTLE_S)
 
     def recv(self, timeout_ms: int | None = None) -> Iterator[CanFrame]:
         """Read one USB transfer and yield every complete CAN frame in it."""
@@ -528,12 +590,38 @@ class CanDevice:
             else:
                 break
 
+            # type 0 uses channel/reserved; types 64/32 releases encode channel
+            # in bits 12..15 and event size in bits 0..11. Keep both formats.
+            event_opcode = None
+            if echo_id != ECHO_RX:
+                event_opcode = struct.unpack_from("<H", buffer, offset + 4)[0]
+                if event_opcode & 0x0FFF >= 16:
+                    event_size = event_opcode & 0x0FFF
+                    allowed_sizes = (28, 32) if echo_id == ECHO_STATE else (frame_size,)
+                    if event_size not in allowed_sizes:
+                        raise ProtocolError(f"invalid event size {event_size}")
+                    frame_size = event_size
+                    event_channel = event_opcode >> 12
+                else:
+                    event_channel = buffer[offset + 4]
+
             if offset + frame_size > len(buffer):
                 self._rx_tail = buffer[offset:]
                 break
 
+            frame_channel = (
+                channel if echo_id == ECHO_RX else event_channel
+            )
+            if frame_channel != self.channel:
+                raise ProtocolError(
+                    f"bulk frame channel {frame_channel} != interface "
+                    f"{self.channel}"
+                )
+
             if echo_id == ECHO_RX:
                 is_fd = bool(flags & FLAG_FD)
+                if is_fd and raw_can_id & CAN_RTR:
+                    raise ProtocolError("CAN FD remote frame is invalid")
                 data_length = dlc_to_length(dlc, is_fd)
                 data_offset = offset + HOST_HEADER.size
                 timestamp_us = 0
@@ -547,12 +635,36 @@ class CanDevice:
                     channel=channel,
                     fd=is_fd,
                     brs=bool(flags & FLAG_BRS),
+                    esi=bool(flags & FLAG_ESI),
                     extended=bool(raw_can_id & CAN_EFF),
                     rtr=bool(raw_can_id & CAN_RTR),
+                    # Firmware mirrors ESI into CAN_ERR on FD data frames.
+                    # Match SocketCAN: ESI is not an error-frame indicator.
+                    error=bool(raw_can_id & CAN_ERR) and not is_fd,
+                    overflow=bool(flags & FLAG_OVERFLOW),
                     timestamp_us=timestamp_us,
                 )
             elif echo_id == ECHO_STATE:
                 self._handle_state_event(buffer, offset)
+                if frame_size == 32:
+                    error_flag, error_code, log_count = struct.unpack_from(
+                        "<BBB", buffer, offset + 28)
+                    self.last_berr = {
+                        "error_flag": error_flag,
+                        "error_code": error_code,
+                        "error_logging_count": log_count,
+                    }
             elif echo_id == ECHO_BERR:
                 self._handle_berr_event(buffer, offset)
+            elif echo_id == ECHO_LOAD:
+                timestamp_us, bus_load, _reserved, tx_ns, rx_ns = (
+                    DEVICE_LOAD_FIELDS.unpack_from(
+                        buffer, offset + EVENT_HEADER.size)
+                )
+                self.last_bus_load = {
+                    "timestamp_us": timestamp_us,
+                    "bus_load_q15": bus_load,
+                    "tx_time_ns": tx_ns,
+                    "rx_time_ns": rx_ns,
+                }
             offset += frame_size

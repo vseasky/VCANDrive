@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+import math
 import sys
 import threading
 import time
@@ -22,42 +23,38 @@ def _calculate_timing(
     clock_hz: int,
     bitrate: int,
     sample_point: float,
+    limits: tuple[int, ...] = (1, 16, 1, 8, 1, 1, 1024, 1),
 ) -> BitTiming:
-    """Calculate timing within the firmware MCAN limits used by both modes."""
-    best_candidate: tuple[float, int, int, int, int] | None = None
-    preferred_time_quanta = 16 if bitrate <= 1_000_000 else 8
-    for brp in range(1, 1025):
-        for tseg1 in range(1, 17):
-            for tseg2 in range(1, 9):
-                time_quanta = 1 + tseg1 + tseg2
-                actual_bitrate = clock_hz / (brp * time_quanta)
-                bitrate_error = abs(actual_bitrate - bitrate) / bitrate
-                if bitrate_error > 0.001:
+    """Use device-advertised limits; round prescaler candidates per TQ count."""
+    t1min, t1max, t2min, t2max, sjwmax, brpmin, brpmax, inc = limits
+    if (clock_hz <= 0 or bitrate <= 0 or not 0 < sample_point < 100
+            or min(t1min, t2min, sjwmax, brpmin, inc) < 1
+            or t1max < t1min or t2max < t2min or brpmax < brpmin
+            or t1max > 1024 or t2max > 1024 or brpmax > 65536):
+        raise can.CanInitializationError("invalid device bit-timing limits")
+    best = None
+    preferred = 16 if bitrate <= 1_000_000 else 8
+    # Avoid iterating every prescaler * segment pair for larger MCU ranges.
+    for tseg1 in range(t1min, t1max + 1):
+        for tseg2 in range(t2min, t2max + 1):
+            tq = 1 + tseg1 + tseg2
+            ideal = clock_hz / (bitrate * tq)
+            index = math.floor((ideal - brpmin) / inc)
+            for i in (index, index + 1):
+                brp = brpmin + i * inc
+                if not brpmin <= brp <= brpmax:
                     continue
-                actual_sample_point = 100.0 * (1 + tseg1) / time_quanta
-                score = (
-                    bitrate_error * 1000
-                    + abs(actual_sample_point - sample_point)
-                )
-                # Prefer the same quantum counts used by the validated kernel
-                # setup: 16 TQ nominal and 8 TQ for the high-speed data phase.
-                candidate = (
-                    score,
-                    abs(time_quanta - preferred_time_quanta),
-                    brp,
-                    tseg1,
-                    tseg2,
-                )
-                if best_candidate is None or candidate < best_candidate:
-                    best_candidate = candidate
-    if best_candidate is None:
+                error = abs(clock_hz / (brp * tq) - bitrate) / bitrate
+                if error > 0.001:
+                    continue
+                score = error * 1000 + abs(100 * (1 + tseg1) / tq - sample_point)
+                candidate = (score, abs(tq - preferred), brp, tseg1, tseg2)
+                if best is None or candidate < best:
+                    best = candidate
+    if best is None:
         raise can.CanInitializationError(
-            f"cannot calculate {bitrate} bit/s timing at {clock_hz} Hz")
-    _, _, brp, tseg1, tseg2 = best_candidate
-    # Match Linux CAN's default SJW when the caller specifies only bitrate and
-    # sample point.  The validated SocketCAN configuration uses SJW=1; choosing
-    # the largest legal SJW here changes the controller timing despite an
-    # otherwise identical bitrate/sample point.
+            f"cannot calculate {bitrate} bit/s timing at {clock_hz} Hz within device limits")
+    _, _, brp, tseg1, tseg2 = best
     return brp, tseg1, tseg2, 1
 
 
@@ -267,7 +264,6 @@ class UsbCanBus(can.BusABC):
 
     DEVICE_MODULE: ClassVar[Any]
     INTERFACE_NAME: ClassVar[str]
-    CLOCK_HZ = 80_000_000
 
     @classmethod
     def switch_usb_mode(
@@ -390,6 +386,7 @@ class UsbCanBus(can.BusABC):
         auto_start: bool = True,
         can_filters: can.typechecking.CanFilters | None = None,
         timeout_ms: int = 2_000,
+        rx_queue_size: int = 4096,
         **kwargs: Any,
     ) -> None:
         try:
@@ -408,6 +405,8 @@ class UsbCanBus(can.BusABC):
                 "data_sample_point must be between 0 and 100")
         if timeout_ms <= 0:
             raise can.CanInitializationError("timeout_ms must be > 0")
+        if rx_queue_size <= 0:
+            raise can.CanInitializationError("rx_queue_size must be > 0")
         try:
             port_path = usb_transport.normalize_port_path(port_path)
         except ValueError as exc:
@@ -422,6 +421,9 @@ class UsbCanBus(can.BusABC):
             port_path=port_path)
         self._protocol_device: Any | None = None
         self._rx_queue: deque[Any] = deque()
+        self._rx_queue_size = rx_queue_size
+        self._rx_dropped = 0
+        self._rx_overflow = 0
         self._rx_condition = threading.Condition()
         self._io_lock = threading.RLock()
         self._rx_error: BaseException | None = None
@@ -431,16 +433,21 @@ class UsbCanBus(can.BusABC):
         self._loopback = loopback
         self._termination_setting = termination
         self._bus_load_setting = bus_load_reporting
-        self._nominal_timing = _calculate_timing(
-            self.CLOCK_HZ, bitrate, sample_point)
-        self._data_timing = _calculate_timing(
-            self.CLOCK_HZ, data_bitrate, data_sample_point)
         self._is_shutdown = False
         try:
             self._protocol_device = self.DEVICE_MODULE.CanDevice(
                 device=self._usb_interface, channel=channel_number,
                 timeout_ms=timeout_ms,
                 control_device=self._usb_session.control_device)
+            if hasattr(self._protocol_device, "host_format"):
+                self._protocol_device.host_format()
+            self._capabilities = self._protocol_device.capabilities()
+            self._nominal_timing = _calculate_timing(
+                self._capabilities["clock_hz"], bitrate, sample_point,
+                self._capabilities["nominal"])
+            self._data_timing = None
+            self._data_bitrate = data_bitrate
+            self._data_sample_point = data_sample_point
             # BSP_INFO is diagnostic-only and is deliberately not part of the
             # normal initialization transaction.
             # Claim/open has completed.  Submit this interface's independent
@@ -450,6 +457,12 @@ class UsbCanBus(can.BusABC):
             self._usb_interface.ensure_rx_submitted(
                 usb_transport.RX_TRANSFER_COUNT)
             self.configure(fd=fd)
+            try:
+                self._device_info = self._protocol_device.info()
+            except (usb.core.USBError, self.DEVICE_MODULE.ProtocolError):
+                # BSP_INFO is optional on older firmware.  CAN operation must
+                # remain available when this diagnostic request is absent.
+                self._device_info = None
             if auto_start:
                 self.start()
         except Exception:
@@ -489,8 +502,16 @@ class UsbCanBus(can.BusABC):
             return
         if received_frames:
             with self._rx_condition:
-                self._rx_queue.extend(received_frames)
-                self._rx_condition.notify_all()
+                self._rx_overflow += sum(
+                    int(getattr(frame, "overflow", False))
+                    for frame in received_frames
+                )
+                available = self._rx_queue_size - len(self._rx_queue)
+                accepted = received_frames[:available]
+                self._rx_queue.extend(accepted)
+                self._rx_dropped += len(received_frames) - len(accepted)
+                if accepted:
+                    self._rx_condition.notify_all()
 
     def send(self, msg: can.Message, timeout: float | None = None) -> None:
         if self._is_shutdown:
@@ -504,20 +525,45 @@ class UsbCanBus(can.BusABC):
         if msg.is_fd and self._can_protocol is not can.CanProtocol.CAN_FD:
             raise can.CanOperationError(
                 "cannot send a CAN FD message on a classic CAN bus")
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be >= 0")
+        if msg.is_fd and msg.is_remote_frame:
+            raise ValueError("CAN FD does not support remote frames")
         protocol_frame = self.DEVICE_MODULE.CanFrame(
             can_id=msg.arbitration_id,
             data=bytes(msg.data),
             channel=self.channel,
             fd=msg.is_fd,
             brs=msg.bitrate_switch,
+            esi=msg.error_state_indicator,
             extended=msg.is_extended_id,
             rtr=msg.is_remote_frame,
+            error=msg.is_error_frame,
+            dlc=msg.dlc,
         )
+        deadline = None if timeout is None else time.monotonic() + timeout
+        acquired = (
+            self._io_lock.acquire()
+            if timeout is None
+            else self._io_lock.acquire(timeout=timeout)
+        )
+        if not acquired:
+            raise can.CanOperationError("send queue timeout")
         try:
-            with self._io_lock:
-                self._protocol_device.send(protocol_frame)
+            remaining = (
+                None if deadline is None
+                else max(0.0, deadline - time.monotonic())
+            )
+            tx_timeout_ms = (
+                None if remaining is None
+                else max(1, math.ceil(remaining * 1000.0))
+            )
+            self._protocol_device.send(
+                protocol_frame, timeout_ms=tx_timeout_ms)
         except (usb.core.USBError, self.DEVICE_MODULE.ProtocolError) as exc:
             raise can.CanOperationError(str(exc)) from exc
+        finally:
+            self._io_lock.release()
 
     def _recv_internal(
         self, timeout: float | None
@@ -551,6 +597,8 @@ class UsbCanBus(can.BusABC):
             is_remote_frame=protocol_frame.rtr,
             is_fd=protocol_frame.fd,
             bitrate_switch=protocol_frame.brs,
+            error_state_indicator=protocol_frame.esi,
+            is_error_frame=protocol_frame.error,
             channel=protocol_frame.channel,
             dlc=len(protocol_frame.data),
             data=payload,
@@ -615,6 +663,13 @@ class UsbCanBus(can.BusABC):
             raise can.CanOperationError("stop channel before configuring it")
         if fd is None:
             fd = self._can_protocol is can.CanProtocol.CAN_FD
+        if fd:
+            if not self._capabilities["fd"]:
+                raise can.CanOperationError("device does not advertise CAN FD support")
+            if self._data_timing is None:
+                self._data_timing = _calculate_timing(
+                    self._capabilities["clock_hz"], self._data_bitrate,
+                    self._data_sample_point, self._capabilities["data"])
         with self._io_lock:
             # A newly opened host handle does not imply that MCAN was closed:
             # USB configuration and CAN controller state have independent
@@ -639,9 +694,32 @@ class UsbCanBus(can.BusABC):
                     self._termination_setting)
         self._start_flags = flags
 
+    def get_bit_timing(self) -> dict[str, Any]:
+        """Return host-selected timing, not hardware register readback."""
+        clock = self._capabilities["clock_hz"]
+        def describe(timing):
+            if timing is None:
+                return None
+            brp, tseg1, tseg2, sjw = timing
+            tq = 1 + tseg1 + tseg2
+            return dict(brp=brp, tseg1=tseg1, tseg2=tseg2, sjw=sjw,
+                        bitrate=clock / (brp * tq),
+                        sample_point=100 * (1 + tseg1) / tq)
+        return {"nominal": describe(self._nominal_timing),
+                "data": describe(self._data_timing)}
+
+    def get_capabilities(self) -> dict[str, Any]:
+        """Return cached clock, FD feature and nominal/data timing limits."""
+        return dict(self._capabilities)
+
     def get_device_info(self) -> dict[str, Any]:
-        # Never issue optional EP0 traffic while the controller is running.
-        return dict(self._device_info or {})
+        if self._device_info is None:
+            if self._started:
+                raise can.CanOperationError(
+                    "stop channel before querying device information")
+            with self._io_lock:
+                self._device_info = self._protocol_device.info()
+        return dict(self._device_info)
 
     def set_termination(self, enabled: bool) -> None:
         if self._started:
@@ -665,16 +743,14 @@ class UsbCanBus(can.BusABC):
     def state(self) -> can.BusState:
         """Map the firmware controller state to python-can's coarse model.
 
-        ``can.BusState`` only distinguishes ACTIVE/PASSIVE; error-warning is
-        folded into ACTIVE and bus-off into PASSIVE. Use
-        :meth:`get_berr_counter` for the full firmware state and error
-        counters.
+        Error-warning maps to ACTIVE, error-passive to PASSIVE and bus-off
+        to ERROR. The value is cached telemetry, not a synchronous state query.
+        Use :meth:`get_berr_counter` for cached RX/TX error counters.
         """
         firmware_state = getattr(self._protocol_device, "can_state", None)
-        if firmware_state in (
-            self.DEVICE_MODULE.CAN_STATE_ERROR_PASSIVE,
-            self.DEVICE_MODULE.CAN_STATE_BUS_OFF,
-        ):
+        if firmware_state == self.DEVICE_MODULE.CAN_STATE_BUS_OFF:
+            return can.BusState.ERROR
+        if firmware_state == self.DEVICE_MODULE.CAN_STATE_ERROR_PASSIVE:
             return can.BusState.PASSIVE
         return can.BusState.ACTIVE
 
@@ -686,6 +762,11 @@ class UsbCanBus(can.BusABC):
         """
         return dict(getattr(self._protocol_device, "bec", {"rxerr": 0, "txerr": 0}))
 
+    def get_bus_load(self) -> dict[str, int] | None:
+        """Return the most recent firmware LOAD event, if reporting is on."""
+        value = getattr(self._protocol_device, "last_bus_load", None)
+        return None if value is None else dict(value)
+
     def identify(self, enabled: bool = True) -> None:
         """Start or stop the device's own LED-blink identify pattern."""
         with self._io_lock:
@@ -693,7 +774,13 @@ class UsbCanBus(can.BusABC):
 
     def get_usb_stats(self) -> dict[str, int]:
         """Return interface-local USB transfer counters for diagnostics."""
-        return self._usb_interface.stats()
+        stats = self._usb_interface.stats()
+        with self._rx_condition:
+            stats["app_rx_queued"] = len(self._rx_queue)
+            stats["app_rx_queue_size"] = self._rx_queue_size
+            stats["app_rx_dropped"] = self._rx_dropped
+            stats["app_rx_overflow"] = self._rx_overflow
+        return stats
 
     def wait_for_usb_rx(self, previous: int, timeout: float) -> bool:
         """Wait for one new bulk-IN completion on this interface."""

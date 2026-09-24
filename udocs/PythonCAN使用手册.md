@@ -7,7 +7,7 @@
 | VCAN | `1d50:6080` | `vcan-usb` | `vcan_usb` |
 | VKGS/gs_usb 扩展 | `1d50:606f` | `vkgs-usb` | `vkgs_usb` |
 
-只安装当前固件模式对应的 Python 包。终端工具与测试脚本位于 `python-cli/tools/`
+只安装当前固件模式对应的 Python 包。查看设备身份或切换 VCAN、PCAN、GS_CAN 模式，请使用[设备管理器](设备管理器.md)。终端工具与测试脚本位于 `python-cli/tools/`
 与 `python-cli/tests/`，它们不会随驱动包安装分发。
 
 > 关键规则：同一 USB 接口不能同时被 `python-can` 后端和 SocketCAN 内核驱动占用。

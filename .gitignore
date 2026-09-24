@@ -28,3 +28,22 @@ out/
 # Logs
 *.log
 
+
+# Private local archives, upgrade/build tools and captures
+/docs/
+/ref/
+/tools/
+/test-results/
+/device_manager/
+/python-cli/test-results/
+*.ota
+*.upd
+*.bin
+*.hex
+*.elf
+*.axf
+*.exe
+*.dll
+*.zip
+*.7z
+*.jsonl

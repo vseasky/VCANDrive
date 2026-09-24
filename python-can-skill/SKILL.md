@@ -30,7 +30,8 @@ Build applications against the repository's public `python-can` backends. Keep t
    - `python-cli/vcan_usb/vcan_usb/bus.py`
    - `python-cli/vkgs_usb/vkgs_usb/bus.py`
    - `python-cli/tools/canctl.py`
-   - `docs/PythonAPI参考.md`
+   - `udocs/PythonAPI参考.md`
+   - `udocs/设备管理器.md` for identity, version display, and USB personality changes
 
    Check the implementation before documenting a new extension method or backend-specific behavior.
 
