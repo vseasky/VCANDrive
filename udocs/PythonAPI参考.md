@@ -1,6 +1,6 @@
 # Python API 参考
 
-本文档是 `vcan-usb` 与 `vkgs-usb` 的统一接口说明。完整安装与故障处理请先看
+本文档是 `vcan-usb` 与 `vkgs-usb` 的统一接口说明。首次安装与收发验证请先看[快速入门](快速入门.md)；完整配置与故障处理再看
 《[PythonCAN 使用手册](PythonCAN使用手册.md)》。两者 API 保持同构。面向项目生成、
 DBC 与 CANopen 集成时，可同时查阅 [`python-can-skill`](../python-can-skill/SKILL.md)
 和《[CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md)》。

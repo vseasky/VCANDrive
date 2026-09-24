@@ -1,6 +1,6 @@
 # Python 终端工具（canctl / can-test）
 
-仓库提供两个命令入口：
+新用户先按[快速入门](快速入门.md)完成安装和一帧收发，再使用本页的完整命令。仓库提供两个命令入口：
 
 | 工具 | 文件 | 角色 |
 |---|---|---|
@@ -8,7 +8,7 @@
 | `can-test` | `tests/hardware_test.py` | 双通道硬件验收（总线互通/内部回环） |
 
 两个工具都使用公开的 `python-can` 后端（`vcan_usb` 或 `vkgs_usb`），不属于 `python-can` 的可安装 `console_script`。
-运行示例默认在 `04.VCANDrive/python-cli/` 目录。
+运行示例默认在 `VCANDrive/python-cli/` 目录。
 
 ## 1. 运行入口
 

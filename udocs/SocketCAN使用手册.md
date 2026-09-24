@@ -1,6 +1,6 @@
 # SocketCAN 使用手册
 
-本文档面向 Linux 下的 SocketCAN 使用流程：驱动加载、CAN 配置、统计诊断、验证脚本与
+第一次使用请先按[快速入门](快速入门.md)完成接线、安装和第一帧收发。本文面向 Linux 下的 SocketCAN 使用流程：驱动加载、CAN 配置、统计诊断、验证脚本与
 故障排查。
 
 支持模式：
@@ -45,7 +45,7 @@ sudo apt install build-essential linux-headers-$(uname -r) can-utils
 VCAN：
 
 ```bash
-cd /path/to/04.VCANDrive/kernel/vcan_usb
+cd /path/to/VCANDrive/kernel/vcan_usb
 make
 sudo make install
 sudo depmod -a
@@ -55,7 +55,7 @@ sudo modprobe vcan_usb
 VKGS：
 
 ```bash
-cd /path/to/04.VCANDrive/kernel/vkgs_usb
+cd /path/to/VCANDrive/kernel/vkgs_usb
 make
 sudo make install
 sudo depmod -a
@@ -167,14 +167,14 @@ cansniffer can0
 默认每阶段发送 60 帧。
 
 ```bash
-sudo /path/to/04.VCANDrive/kernel/tests/vcan_usb/test_vcan_usb.sh
-sudo /path/to/04.VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
+sudo /path/to/VCANDrive/kernel/tests/vcan_usb/test_vcan_usb.sh
+sudo /path/to/VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
 可通过环境变量控制测试规模：
 
 ```bash
-sudo env BUILD=0 NFRAMES=20 /path/to/04.VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
+sudo env BUILD=0 NFRAMES=20 /path/to/VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
 - `BUILD=0`：不重编不重载，适用于确认当前已加载模块正确时；

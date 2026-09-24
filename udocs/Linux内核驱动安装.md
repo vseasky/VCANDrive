@@ -1,6 +1,6 @@
 # Linux 内核驱动安装
 
-本文说明如何按设备当前 USB personality 安装 VCANDrive 的 out-of-tree SocketCAN 模块。完成安装后再阅读 [SocketCAN 使用手册](SocketCAN使用手册.md)。
+第一次接线和收发请先按[快速入门](快速入门.md)完成。本文说明如何按设备当前 USB 模式安装 VCANDrive 的 SocketCAN 模块；完成安装后再阅读[SocketCAN 使用手册](SocketCAN使用手册.md)。
 
 ## 1. 确认设备模式
 

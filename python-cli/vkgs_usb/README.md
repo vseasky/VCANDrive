@@ -1,5 +1,7 @@
 # vkgs-usb
 
+首次使用请先看[快速入门](../../udocs/快速入门.md)，确认设备模式、安装对应包并验收收发。
+
 VKGS/gs_usb 扩展固件（USB ID `1d50:606f`）的独立 `python-can` 后端，只注册
 `interface="vkgs_usb"`。
 

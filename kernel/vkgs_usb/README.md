@@ -2,6 +2,7 @@
 
 Out-of-tree Linux SocketCAN driver for the GS_CAN USB-CAN(FD) mode.
 
+> 新用户先看[快速入门](../../udocs/快速入门.md)。
 > 中文文档：[SocketCAN 使用手册](../../udocs/SocketCAN使用手册.md)、
 > [驱动特殊 API 说明](../../udocs/驱动特殊API说明.md)。
 
@@ -98,4 +99,4 @@ close/open regression. Unsupported optional FD tools are reported as skips;
 `REQUIRE_ALL=1` makes missing coverage fail. The old `NFRAMES` setting is no
 longer used. Default execution builds/reloads the driver and leaves interfaces
 down during cleanup. Use `sudo bash <script>` if its executable bit is missing.
-See [test strategy](../tests/CAN_TEST_STRATEGY.md) for full coverage details.
+The acceptance script reports passes, failures and skipped optional coverage.

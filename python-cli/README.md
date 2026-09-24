@@ -1,5 +1,7 @@
 # Python CAN USB 后端
 
+首次使用请先按[快速入门](../udocs/快速入门.md)完成模式识别、驱动安装与第一帧收发。
+
 本目录包含两个独立安装、API 一致的 `python-can` 后端：
 
 | 目录 | 固件模式 | `can.Bus` 接口名 |
@@ -57,23 +59,12 @@ Windows 上每个 `Bus` 独立打开目标 `MI_xx` WinUSB interface。两个终�
 `canctl` 和 `can-test` 是 Linux Bash 包装入口，不是 pip 生成的 console script。
 Windows 直接调用对应 Python 文件。
 
-## 验证
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 .venv-linux/bin/python -m unittest discover -s tests/unit -v
-```
-
-```powershell
-$env:PYTHONDONTWRITEBYTECODE='1'
-.\.venv-win\Scripts\python.exe -m unittest discover -s tests\unit -v
-```
-
 完整文档：
 
 - [PythonCAN 使用手册](../udocs/PythonCAN使用手册.md)
 - [Python 终端工具](../udocs/Python终端工具.md)
 - [Python API 参考](../udocs/PythonAPI参考.md)
-- [设备管理器](../udocs/设备管理器.md)
+- [独立 Windows 设备管理器](../udocs/设备管理器.md)
 
 使用说明和公开 API 统一从 [文档导航](../udocs/README.md) 查阅。
 

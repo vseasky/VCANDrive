@@ -211,7 +211,7 @@ vkgs_usb_bus.switch_usb_mode(
 
 1. 纯函数：DBC 编解码、CANopen 状态转换、ID 与 DLC 验证。
 2. 虚拟总线：使用 python-can `virtual` backend 验证收发、Notifier 与超时，不依赖 USB。
-3. 仓库单元测试：`python -m unittest discover -s python-cli/tests/unit -v`。
+3. 应用单元测试：为编解码和状态转换编写项目内测试，不依赖真实 USB 设备。
 4. 硬件验收：明确接线和终端后运行 `python-cli/can-test`，先经典 CAN，再 FD/BRS。
 
 上游参考：

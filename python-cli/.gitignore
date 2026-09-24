@@ -16,3 +16,6 @@ test-results/
 *.exe
 *.dll
 *.zip
+
+# Developer-only regression tests live in local tools/
+tests/unit/

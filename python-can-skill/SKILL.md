@@ -7,6 +7,8 @@ description: Build and troubleshoot Python applications using VCANDrive vcan_usb
 
 Build applications against the repository's public `python-can` backends. Keep the transport choice, CAN application protocol, and hardware validation separate so code can be tested without a live bus.
 
+For a first-time user, start with [the quick-start route](../udocs/快速入门.md) and prove one frame on the chosen transport before adding DBC or CANopen.
+
 ## Route the request
 
 1. Identify the device's current USB personality before selecting a backend:

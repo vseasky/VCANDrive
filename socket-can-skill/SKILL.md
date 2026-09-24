@@ -7,6 +7,8 @@ description: Build and troubleshoot Linux SocketCAN applications for VCANDrive c
 
 Build Linux applications on the stable SocketCAN network interface. Once the correct VCANDrive module has registered a `canX` netdevice, application code should use standard `PF_CAN` APIs and should not depend on USB endpoint details.
 
+For a first-time user, start with [the quick-start route](../udocs/快速入门.md) and verify one frame before designing the application protocol.
+
 ## Route the request
 
 1. Confirm the device mode and driver ownership:

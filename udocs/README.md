@@ -2,10 +2,15 @@
 
 本目录面向驱动安装、API 开发、应用协议接入和故障定位。第一次使用时只选择一种主机端路径：Linux SocketCAN 或 Python USB backend。
 
+## 第一次使用
+
+从[快速入门](快速入门.md)开始：确认工作模式与接线，按 Windows Python 或 Linux SocketCAN 路线安装，然后先验证一帧收发、再运行小帧数验收。下表用于完成首次验证后查找专题说明。
+
 ## 按任务选择
 
 | 目标 | 首先阅读 | 后续参考 |
 |---|---|---|
+| 第一次接线、安装、收发与故障排查 | [快速入门](快速入门.md) | [设备管理器](设备管理器.md) |
 | 理解仓库能力、边界和目录 | [项目说明](项目说明.md) | 根目录 [README](../README.md) |
 | Linux 安装/更新驱动 | [Linux 内核驱动安装](Linux内核驱动安装.md) | [SocketCAN 使用手册](SocketCAN使用手册.md) |
 | 使用 `candump`、`cansend` 或 C `PF_CAN` | [SocketCAN 使用手册](SocketCAN使用手册.md) | [`socket-can-skill`](../socket-can-skill/SKILL.md) |

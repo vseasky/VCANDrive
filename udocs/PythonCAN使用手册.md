@@ -1,6 +1,6 @@
 # PythonCAN 使用手册
 
-本仓库提供两套独立的 `python-can` USB 后端：
+第一次使用请先按[快速入门](快速入门.md)确认模式、安装驱动并完成第一帧收发。本文提供后续配置和开发说明，仓库包含两套独立的 `python-can` USB 后端：
 
 | 固件模式 | USB ID | 安装包 | `can.Bus` 接口名 |
 |---|---|---|---|
@@ -19,12 +19,12 @@
 
 ## 1. 快速开始
 
-以下命令均在 `04.VCANDrive/python-cli/` 目录执行。
+以下命令均在 `VCANDrive/python-cli/` 目录执行。
 
 ### 1.1 Linux
 
 ```bash
-cd /path/to/04.VCANDrive/python-cli
+cd /path/to/VCANDrive/python-cli
 python3 -m venv .venv-linux
 .venv-linux/bin/python -m pip install --upgrade pip setuptools wheel
 .venv-linux/bin/python -m pip install -e ./vkgs_usb
@@ -318,18 +318,7 @@ finally:
 
 ## 9. 验证与测试
 
-### 9.1 单元测试（不访问硬件）
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 .venv-linux/bin/python -m unittest discover -s tests/unit -v
-```
-
-```powershell
-$env:PYTHONDONTWRITEBYTECODE='1'
-.\.venv-win\Scripts\python.exe -m unittest discover -s tests\unit -v
-```
-
-### 9.2 硬件验收
+### 9.1 硬件验收
 
 双通道互通要求 CANH-CANH、CANL-CANL 交叉连接：
 

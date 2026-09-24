@@ -58,12 +58,6 @@ VCAN 将 interface 改为 `vcan_usb`。同一接口不能被其他程序占用�
 运行错误。部分覆盖通过不等于完整覆盖；速率不代表硬件理论上限。
 本套件不替代 ISO-TP/J1939、RTR、bus-off 故障注入或目标总线负载测试。
 
-## 无硬件回归
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 .venv-linux/bin/python -m unittest discover -s tests/unit -v
-```
-
 公开安装和验收说明见[文档导航](../../udocs/README.md)。
 
 测试开始时打印每通道时钟和 FD 能力。设备不支持 FD 时，默认套件会报错，
