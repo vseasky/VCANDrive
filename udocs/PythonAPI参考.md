@@ -12,18 +12,19 @@ DBC 与 CANopen 集成时，可同时查阅 [`python-can-skill`](../python-can-s
 ```python
 import can
 
-bus = can.Bus(interface="vcan_usb", channel=0)
-bus = can.Bus(interface="vkgs_usb", channel=0)
+backend = "vcan_usb"  # GS_CAN 模式改为 "vkgs_usb"；只选择一种
+with can.Bus(interface=backend, channel=0, bitrate=500_000) as bus:
+    print(bus.channel_info)
 ```
 
 需要静态发现设备或访问管理 API：
 
 ```python
+# VCAN 模式：只安装并导入 vcan_usb；GS_CAN 模式改为 vkgs_usb
 from vcan_usb import vcan_usb_bus
-from vkgs_usb import vkgs_usb_bus
 
-vcan_usb_bus.discover_channels()
-vkgs_usb_bus.discover_interfaces(index=0)
+print(vcan_usb_bus.discover_channels())
+print(vcan_usb_bus.discover_interfaces(index=0))
 ```
 
 两套后端都从 `can.BusABC` 继承，支持 `send()`、`recv()`、`set_filters()`、
@@ -96,10 +97,12 @@ interfaces = vkgs_usb_bus.discover_interfaces(index=0)
 
 ## 4. USB 协议模式切换（设备管理 API）
 
+以下是三种**独立示例**，只执行与当前模式和目标模式相符的一行；切换后设备会重启，不要连续运行：
+
 ```python
-vkgs_usb_bus.switch_usb_mode("vcan", channel=0)
-vcan_usb_bus.switch_usb_mode("gs_usb", channel=0)
-vcan_usb_bus.switch_usb_mode("peak", channel=0)
+vkgs_usb_bus.switch_usb_mode("vcan", channel=0)  # 当前 GS_CAN
+vcan_usb_bus.switch_usb_mode("gs_usb", channel=0)  # 当前 VCAN
+vcan_usb_bus.switch_usb_mode("peak", channel=0)  # 当前 VCAN
 ```
 
 可选目标：`vcan`、`peak`、`gs_usb`。`channel` 与 `index`/`bus`/`address`/`port_path` 需同时校验才可稳定定位目标设备。

@@ -1,5 +1,7 @@
 # Linux 内核驱动安装
 
+使用本页前先按[快速入门](快速入门.md)确认设备模式、安装匹配的驱动并完成第一帧收发；需要完整验收时按[验收测试路线](验证路线.md)逐步运行。
+
 第一次接线和收发请先按[快速入门](快速入门.md)完成。本文说明如何按设备当前 USB 模式安装 VCANDrive 的 SocketCAN 模块；完成安装后再阅读[SocketCAN 使用手册](SocketCAN使用手册.md)。
 
 ## 1. 确认设备模式
@@ -110,12 +112,18 @@ done
 
 ```bash
 sudo ip link set can0 down
+sudo ip link set can1 down
 sudo ip link set can0 type can bitrate 500000 restart-ms 100
+sudo ip link set can1 type can bitrate 500000 restart-ms 100
+sudo ip link set can0 type can termination 120
+sudo ip link set can1 type can termination 120
 sudo ip link set can0 up
+sudo ip link set can1 up
 ip -details -statistics link show can0
+ip -details -statistics link show can1
 ```
 
-在另一终端先接收：
+若总线两端已有外置 120 Ω 电阻，将上面的两个 `termination 120` 改为 `termination 0`。在另一终端先接收：
 
 ```bash
 candump -ta -e can0
@@ -162,20 +170,14 @@ modinfo vcan_usb   # 或 vkgs_usb
 
 ## 10. 自动硬件验收
 
-把两个通道接入同一隔离 CAN 总线并正确设置终端，然后从仓库根目录运行：
+先按[快速入门](快速入门.md)完成两路接线、终端和一帧收发，再在隔离总线上从仓库根目录运行**当前模式对应的一个**脚本：
 
 ```bash
-sudo ./kernel/tests/vcan_usb/test_vcan_usb.sh
+sudo bash ./kernel/tests/vcan_usb/test_vcan_usb.sh
 sudo bash ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
-脚本依次验证共享总线 classic CAN、FD/BRS-off、FD/BRS-on，以及两路独立内部回环。可用：
-
-```bash
-sudo env BUILD=0 NFRAMES=20 ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
-```
-
-脚本会重配接口、启用终端并发送真实流量，不要在生产总线执行。
+脚本默认会构建/重载驱动并重配接口。它测试 250 kbit/s 与 1 Mbit/s 混合帧、ECU 流量、ISO-TP、J1939 TP、序号、FD、目标负载与重复打开；旧的 `NFRAMES` 变量不再生效。需要调整时使用 `DURATION`、`SEQUENCE_FRAMES`、`CANFD_LOOPS`、`REOPEN_LOOPS` 等，详见[验收测试路线](验证路线.md)。最终若出现 `partial coverage` 或 `SKIP`，应记录未执行项目，不能把它们当作通过。
 
 ## 11. 卸载与切换 Python backend
 

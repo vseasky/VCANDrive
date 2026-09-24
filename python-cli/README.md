@@ -36,22 +36,19 @@ py -3 -m venv .venv-win
 
 不要指定 `py -3.10`，除非 `py --list` 确认本机已安装该版本。
 
-## 常用命令
+## 按用户路线验证
 
-Linux：
+先在当前模式下运行 `list`，确认能看到实际的两路 `channel`；再按照[快速入门](../udocs/快速入门.md)在两个终端完成一帧收发。下面是从 `python-cli/` 目录执行的入门功能验收，它**不代表所有测试**：
 
 ```bash
-sudo ./canctl --interface vkgs_usb --channel 0 send 0x123 11223344
-sudo ./canctl --interface vkgs_usb --channel 1 recv --count 10
-sudo ./can-test --interface vkgs_usb --channels 2 --mode bus --profile functional --frames 60
+sudo ./can-test --interface vkgs_usb --channels 2 --mode bus --profile functional --frames 20 --window 1
 ```
-
-Windows：
 
 ```powershell
-.\.venv-win\Scripts\python.exe .\tools\canctl.py --interface vkgs_usb --channel 0 send 0x123 11223344
-.\.venv-win\Scripts\python.exe .\tests\hardware_test.py --interface vkgs_usb --channels 2 --mode bus --profile functional --frames 60
+.\.venv-win\Scripts\python.exe .\tests\hardware_test.py --interface vkgs_usb --channels 2 --mode bus --profile functional --frames 20 --window 1
 ```
+
+VCAN 模式将 `vkgs_usb` 改为 `vcan_usb`。矩阵、压力和 Linux 内核专项的下一步按[验收测试路线](../udocs/验证路线.md)选择，不必一上来运行长时间测试。
 
 Windows 上每个 `Bus` 独立打开目标 `MI_xx` WinUSB interface。两个终端可分别操作同一
 物理设备的 channel 0 和 channel 1；同一个 channel 仍只能由一个进程占用。

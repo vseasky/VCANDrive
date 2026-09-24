@@ -1,5 +1,7 @@
 # CANopen Python 开发工作流
 
+用户路线：先按[快速入门](../../udocs/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+
 CANopen 是建立在 CAN 之上的应用层与通信配置体系。VCANDrive 负责可靠收发 CAN 帧；对象字典、NMT、PDO、SDO、EMCY、SYNC 和 heartbeat 由 CANopen 栈处理。
 
 ## 先准备对象字典

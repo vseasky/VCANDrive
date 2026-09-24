@@ -16,6 +16,8 @@ EDS/DCF 与 DBC 不是互换格式。CANopen 的固定 PDO 可额外映射到 DB
 
 ### 2.1 VCANDrive Python USB backend
 
+先按[快速入门](快速入门.md)完成同位率双通道收发，再按[验收测试路线](验证路线.md)做功能验收。以下两个 transport 任选其一；示例中的模式、通道号和 `network.dbc`/`device.eds` 要换成你的实际设备及项目文件。
+
 适用 Windows、Linux、macOS，直接打开 USB interface：
 
 ```python
@@ -87,8 +89,15 @@ with can.Bus(
 
 接收解码：
 
+发送示例中的 `with` 结束后总线已经关闭。接收端请另开一个会话（实际应用也可以在同一个 `with` 内收发）：
+
 ```python
-frame = bus.recv(timeout=1.0)
+import can
+import cantools
+
+db = cantools.database.load_file("network.dbc", strict=True)
+with can.Bus(interface="vkgs_usb", channel=1, bitrate=500_000, fd=True, data_bitrate=2_000_000) as bus:
+    frame = bus.recv(timeout=1.0)
 if frame is not None:
     try:
         definition = db.get_message_by_frame_id(frame.arbitration_id)

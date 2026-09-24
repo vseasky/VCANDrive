@@ -5,6 +5,8 @@
 VKGS/gs_usb 扩展固件（USB ID `1d50:606f`）的独立 `python-can` 后端，只注册
 `interface="vkgs_usb"`。
 
+以下安装命令从仓库的 `python-cli/` 目录执行，先按[快速入门](../../udocs/快速入门.md)建立虚拟环境。
+
 ```bash
 python3 -m pip install ./vkgs_usb
 ```
@@ -18,6 +20,8 @@ python3 -m pip install ./vkgs_usb
 ```powershell
 .\.venv-win\Scripts\python.exe -m pip install -e .\vkgs_usb
 ```
+
+发送前先让另一通道或外部节点以相同位率在线并配置正确终端；发送无异常不代表对端已经收到，可按[验收测试路线](../../udocs/验证路线.md)核对收发一致。
 
 ```python
 import can

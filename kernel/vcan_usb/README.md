@@ -6,6 +6,8 @@ Out-of-tree Linux SocketCAN driver for the VCAN USB-CAN(FD) mode.
 > 中文文档：[SocketCAN 使用手册](../../udocs/SocketCAN使用手册.md)、
 > [驱动特殊 API 说明](../../udocs/驱动特殊API说明.md)。
 
+Start with the [quickstart](../../udocs/快速入门.md): identify the USB mode, connect two CAN channels with correct termination, build the matching module, check both `canX` interfaces, then exchange one frame. Run the [acceptance route](../../udocs/验证路线.md) after that first frame succeeds.
+
 ## Topology
 
 The device exposes **one USB interface per CAN channel**, each with its own bulk
@@ -59,14 +61,40 @@ DKMS: copy this directory to `/usr/src/vcan_usb-1.1.4/`, then
 
 ## Usage
 
+Connect CAN0-H to CAN1-H and CAN0-L to CAN1-L on an isolated test bus. Use one
+120 Ω termination at each end. If external resistors are already installed,
+change both `termination 120` commands below to `termination 0`.
+
+For classic CAN, configure both interfaces **while down**, then bring them up:
+
 ```bash
-sudo ip link set can0 up type can bitrate 500000
-# CAN FD:
-sudo ip link set can0 up type can bitrate 1000000 dbitrate 5000000 fd on
-sudo ip link set can0 type can termination 120   # 120 Ohm on (0 = off)
-candump can0
-cansend can0 123#11223344
+sudo ip link set can0 down
+sudo ip link set can1 down
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can1 type can bitrate 500000
+sudo ip link set can0 type can termination 120
+sudo ip link set can1 type can termination 120
+sudo ip link set can0 up
+sudo ip link set can1 up
 ```
+
+Run `candump can1` in terminal A and `cansend can0 123#11223344` in terminal B.
+Expected: terminal A prints ID `123` and bytes `11 22 33 44`.
+
+To test CAN FD instead, stop both interfaces and select matching arbitration and
+data bitrates before starting them again:
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can1 down
+sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can1 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can0 up
+sudo ip link set can1 up
+```
+
+See the [SocketCAN manual](../../udocs/SocketCAN使用手册.md) for FD sending and
+the [acceptance route](../../udocs/验证路线.md) for automated coverage.
 
 ## Test
 
@@ -82,5 +110,4 @@ suite covers mixed traffic, ISO-TP/J1939, sequence integrity, load, CAN FD and
 close/open regression. Unsupported optional FD tools are reported as skips;
 `REQUIRE_ALL=1` makes missing coverage fail. The old `NFRAMES` setting is no
 longer used. Default execution builds/reloads the driver and leaves interfaces
-down during cleanup. Use `sudo bash <script>` if its executable bit is missing.
-The acceptance script reports passes, failures and skipped optional coverage.
+down during cleanup. The acceptance script reports passes, failures and skipped optional coverage.

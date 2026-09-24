@@ -1,5 +1,7 @@
 # Linux SocketCAN API 开发参考
 
+用户路线：先按[快速入门](../../udocs/快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../../udocs/验证路线.md)验收 Linux 内核路径，最后使用本页 API。
+
 SocketCAN 把 CAN 控制器注册成 Linux 网络接口。应用只依赖 `PF_CAN`/`canX`，无需知道 VCANDrive 的 USB 端点或 vendor request。
 
 ## 最小且可复用的打开函数

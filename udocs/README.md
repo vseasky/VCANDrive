@@ -15,7 +15,8 @@
 | Linux 安装/更新驱动 | [Linux 内核驱动安装](Linux内核驱动安装.md) | [SocketCAN 使用手册](SocketCAN使用手册.md) |
 | 使用 `candump`、`cansend` 或 C `PF_CAN` | [SocketCAN 使用手册](SocketCAN使用手册.md) | [`socket-can-skill`](../socket-can-skill/SKILL.md) |
 | Windows/Linux/macOS Python 自动化 | [PythonCAN 使用手册](PythonCAN使用手册.md) | [Python API 参考](PythonAPI参考.md) |
-| 查看设备身份并切换模式 | [设备管理器](设备管理器.md) | [PCAN 模式设备管理接口](PCAN设备管理.md) |
+| 查看设备身份、按通道设置终端电阻并切换模式 | [设备管理器](设备管理器.md) | [PCAN 模式设备管理接口](PCAN设备管理.md) |
+| 按目标选择功能、矩阵、压力和 Linux 内核验收 | [验收测试路线](验证路线.md) | [Python 硬件测试说明](../python-cli/tests/README.md) |
 | 使用命令行验收设备 | [Python 终端工具](Python终端工具.md) | [PythonCAN 使用手册](PythonCAN使用手册.md) |
 | 接入 CANopen 或 DBC | [CANopen 与 DBC 开发指南](CANopen与DBC开发指南.md) | 两个项目 Skills |
 | 开发自定义 USB 上位机 | [驱动特殊 API 说明](驱动特殊API说明.md) | 固件协议实现 |

@@ -4,7 +4,8 @@ VCANDrive 提供 VCAN 与 GS_CAN 两种 USB-CAN 模式的 Linux SocketCAN 驱动
 
 ## 从这里开始
 
-- **第一次使用**：[快速入门](udocs/快速入门.md)（接线、识别、安装、收发与验收）
+- **第一次使用**：[快速入门](udocs/快速入门.md)（接线、识别、安装、第一帧）
+- **进阶验收**：[验证路线](udocs/验证路线.md)（功能、矩阵、压力、内核专项）
 - [文档导航](udocs/README.md)
 - [Linux 驱动安装](udocs/Linux内核驱动安装.md)与 [SocketCAN 使用](udocs/SocketCAN使用手册.md)
 - [Python 安装与使用](udocs/PythonCAN使用手册.md)及 [API 参考](udocs/PythonAPI参考.md)

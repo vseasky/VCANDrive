@@ -5,6 +5,8 @@ description: Build and troubleshoot Python applications using VCANDrive vcan_usb
 
 # VCANDrive Python CAN
 
+用户路线：先按[快速入门](../udocs/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../udocs/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+
 Build applications against the repository's public `python-can` backends. Keep the transport choice, CAN application protocol, and hardware validation separate so code can be tested without a live bus.
 
 For a first-time user, start with [the quick-start route](../udocs/快速入门.md) and prove one frame on the chosen transport before adding DBC or CANopen.

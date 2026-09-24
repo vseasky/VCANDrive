@@ -5,6 +5,8 @@ description: Build and troubleshoot Linux SocketCAN applications for VCANDrive c
 
 # VCANDrive SocketCAN
 
+用户路线：先按[快速入门](../udocs/快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../udocs/验证路线.md)验收 Linux 内核路径，最后使用本页 API。
+
 Build Linux applications on the stable SocketCAN network interface. Once the correct VCANDrive module has registered a `canX` netdevice, application code should use standard `PF_CAN` APIs and should not depend on USB endpoint details.
 
 For a first-time user, start with [the quick-start route](../udocs/快速入门.md) and verify one frame before designing the application protocol.

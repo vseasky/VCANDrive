@@ -1,5 +1,7 @@
 # SocketCAN 使用手册
 
+使用本页前先按[快速入门](快速入门.md)确认设备模式、安装匹配的驱动并完成第一帧收发；需要完整验收时按[验收测试路线](验证路线.md)逐步运行。
+
 第一次使用请先按[快速入门](快速入门.md)完成接线、安装和第一帧收发。本文面向 Linux 下的 SocketCAN 使用流程：驱动加载、CAN 配置、统计诊断、验证脚本与
 故障排查。
 
@@ -155,30 +157,20 @@ cansniffer can0
 
 ## 5. 自动验收脚本
 
-脚本会自动编译并加载对应驱动、发现映射到该驱动的 `canX`，并执行六段矩阵：
-
-1. 共享总线经典 CAN
-2. 共享总线 FD/BRS-off
-3. 共享总线 FD/BRS-on
-4. 独立经典 CAN 内部回环
-5. 独立 FD/BRS-off
-6. 独立 FD/BRS-on
-
-默认每阶段发送 60 帧。
+先按[快速入门](快速入门.md)完成两路接线和 `candump`/`cansend` 第一帧。在隔离测试总线上，从仓库根目录**只运行当前模式对应的一个脚本**。脚本会编译/重载模块、配置两路接口和终端，并发送真实流量：
 
 ```bash
-sudo /path/to/VCANDrive/kernel/tests/vcan_usb/test_vcan_usb.sh
-sudo /path/to/VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
+sudo bash ./kernel/tests/vcan_usb/test_vcan_usb.sh
+sudo bash ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
-可通过环境变量控制测试规模：
+当前脚本不是旧版“六阶段、每阶段 NFRAMES 帧”的流程。它依次覆盖 250 kbit/s 混合帧、ECU 周期/事件/诊断流量、ISO-TP、J1939 TP、序号完整性、FD 往返、目标总线负载、1 Mbit/s 混合帧、FD 压力与重复打开。默认 `DURATION=10` 秒、`SEQUENCE_FRAMES=10000`、`CANFD_LOOPS=100`、`REOPEN_LOOPS=5`；`NFRAMES` 已不使用。需要保持已加载驱动且缩短持续时间时，可在确认当前模块归属后执行：
 
 ```bash
-sudo env BUILD=0 NFRAMES=20 /path/to/VCANDrive/kernel/tests/vkgs_usb/test_vkgs_usb.sh
+sudo env BUILD=0 DURATION=3 SEQUENCE_FRAMES=1000 CANFD_LOOPS=10 REOPEN_LOOPS=2 bash ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
-- `BUILD=0`：不重编不重载，适用于确认当前已加载模块正确时；
-- `NFRAMES`：每阶段发送帧数。
+这个示例是**缩短测试时间**，不能代表默认规模的完整压力结果。输出 `STRESS TEST PASSED` 表示已执行项目通过；`STRESS TEST PASSED (partial coverage...)` 表示可选工具或 FD 能力不足导致部分跳过。必须全部执行且不允许跳过时使用 `REQUIRE_ALL=1`。环境要求、Python USB 测试与本脚本的覆盖差异见[验收测试路线](验证路线.md)。
 
 ## 6. 常见问题与定位
 

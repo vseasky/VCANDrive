@@ -1,5 +1,7 @@
 # Python 终端工具（canctl / can-test）
 
+使用本页前先按[快速入门](快速入门.md)确认设备模式、安装匹配的驱动并完成第一帧收发；需要完整验收时按[验收测试路线](验证路线.md)逐步运行。
+
 新用户先按[快速入门](快速入门.md)完成安装和一帧收发，再使用本页的完整命令。仓库提供两个命令入口：
 
 | 工具 | 文件 | 角色 |
@@ -164,36 +166,25 @@ sudo ./canctl --interface vkgs_usb --channel 0 send 0x123 A55A --count 60 --gap 
 
 ## 7. 内部回环与硬件验收（can-test）
 
-### 7.1 单通道内部回环
+先按[快速入门](快速入门.md)完成发现和第一帧收发。`functional --frames 20` 是小批量验收，**不是所有测试**。双通道接入同一隔离 CAN 总线后，在 `python-cli/` 目录按顺序选择所需范围：
 
-```bash
-sudo ./can-test --interface vkgs_usb --channels 1 --mode loopback --frames 60
-```
+| 目标 | 参数 | 预期 |
+|---|---|---|
+| 快速功能 | `--profile functional --frames 20 --window 1` | 六类双向总线/内部回环阶段逐项 `MATCH` |
+| 混合帧矩阵与重开 | `--profile socketcan --frames 100 --window 32 --reopen-loops 4` | 额外覆盖标准/扩展/RTR/FD 矩阵和多位率；报告仍会列出内核专项空缺 |
+| 持续流量与缓冲 | `--profile stress --frames 1000 --window 32 --rounds 1` | 同六类基础阶段的较长收发与队列统计；可按目标提高规模 |
 
-```powershell
-.\.venv-win\Scripts\python.exe .\tests\hardware_test.py --interface vkgs_usb --channels 1 --mode loopback --frames 60
-```
-
-### 7.2 双通道总线互通
-
-```bash
-sudo ./can-test --interface vkgs_usb --channels 2 --mode bus --frames 60
-```
+Windows 示例（`$backend` 按当前 VCAN/GS_CAN 模式设置）：
 
 ```powershell
-.\.venv-win\Scripts\python.exe .\tests\hardware_test.py --interface vkgs_usb --channels 2 --mode bus --frames 60
+$py = '.\.venv-win\Scripts\python.exe'
+$backend = 'vcan_usb'  # GS_CAN 改为 'vkgs_usb'
+& $py .\tests\hardware_test.py --interface $backend --channels 2 --mode bus --profile functional --frames 20 --window 1
+& $py .\tests\hardware_test.py --interface $backend --channels 2 --mode bus --profile socketcan --frames 100 --window 32 --reopen-loops 4
+& $py .\tests\hardware_test.py --interface $backend --channels 2 --mode bus --profile stress --frames 1000 --window 32 --rounds 1
 ```
 
-脚本会按顺序验证：
-
-1. 共享总线经典 CAN
-2. 共享总线 FD（BRS off）
-3. 共享总线 FD（BRS on）
-4. 独立内部回环经典
-5. 独立内部回环 FD（BRS off）
-6. 独立内部回环 FD（BRS on）
-
-每个阶段都要求接收数等于发送数。
+Linux 将入口换成 `sudo ./can-test` 并用对应的接口名。没有物理接线时，只能用 `--channels 1 --mode loopback` 检查内部路径，结果不证明总线互通。`--skip-fd` 会将 FD 标为未覆盖。各配置实际覆盖、Linux 内核脚本和结果判读见[验收测试路线](验证路线.md)及[Python 硬件测试说明](../python-cli/tests/README.md)。
 
 ## 8. 设备状态与统计
 
@@ -253,9 +244,3 @@ sudo ./canctl --interface vcan_usb --channel 0 usb_mode peak
 | `USBErrorBusy` / claim 失败 | 资源未释放 | 先 `ip link set canX down` 或关闭对应 Python Bus |
 
 完整故障对照可回看《[PythonCAN 使用手册](PythonCAN使用手册.md)》和《[Python API 参考](PythonAPI参考.md)》。
-
-
-
-
-
-
