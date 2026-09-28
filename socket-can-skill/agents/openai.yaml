@@ -1,0 +1,4 @@
+interface:
+  display_name: "VCANDrive SocketCAN"
+  short_description: "Build Linux SocketCAN, DBC, and CANopen applications"
+  default_prompt: "Use $socket-can-skill to build a Linux VCANDrive SocketCAN application from this requirement."

@@ -1,0 +1,118 @@
+# VCAN USB Linux Kernel Driver
+
+Out-of-tree Linux SocketCAN driver for the VCAN USB-CAN(FD) mode.
+
+> 新用户先看[快速入门](../../udocs/start/快速入门.md)。
+> 中文文档：[SocketCAN 使用手册](../../udocs/linux/SocketCAN使用手册.md)、
+> [驱动特殊 API 说明](../../udocs/reference/驱动特殊API说明.md)。
+
+Start with the [quickstart](../../udocs/start/快速入门.md): identify the USB mode, connect two CAN channels with correct termination, build the matching module, check both `canX` interfaces, then exchange one frame. Run the [acceptance route](../../udocs/verify/验证路线.md) after that first frame succeeds.
+
+## Topology
+
+The device exposes **one USB interface per CAN channel**, each with its own bulk
+IN/OUT endpoint pair. The driver probes per interface and registers one
+SocketCAN netdev per interface — it does **not** hard‑code the channel count, so
+a device with N interfaces yields `can0 .. canN-1`. Each interface is fully
+independent (own endpoints, own bring‑up).
+
+## Protocol notes
+
+- Self‑describing frames: every frame starts with `{ echo_id, opcode, flags }`,
+  `opcode = (channel << 12) | byte_size`. Data payload starts at offset 24.
+- The firmware does **not** echo transmitted frames; TX is completed on the
+  bulk‑OUT URB completion.
+- Bit timing is register‑encoded (firmware adds 1 to each segment and ignores
+  `prop_seg`): the host sends `brp-1`, `(prop_seg+phase_seg1)-1`, `phase_seg2-1`,
+  `sjw-1`.
+- Termination (120 Ω) uses `VCAN_USB_BREQ_CAN_TERMINATION` (37) and is wired
+  to the standard SocketCAN termination API. Bus-load reporting can be controlled
+  explicitly with `VCAN_USB_BREQ_CAN_BUS_LOAD` (36).
+- Device version/UID/UUID is read via the HAL-specific
+  `VCAN_USB_BREQ_BSP_DEVICE_INFO` (33) request and logged at probe. Software
+  and hardware versions use `vMAJOR.MINOR.PATCH` notation.
+- `berr-reporting` controls the host filter for asynchronous firmware error
+  events. The firmware feature bit only controls whether START includes the
+  legacy BERR mode flag; it is not required to consume bulk-IN error events.
+  Error notifications include valid RX/TX counters (`CAN_ERR_CNT`).
+- FD-capable devices support Classic, ISO FD and non-ISO FD. SocketCAN
+  `fd-non-iso on/off` selects the FD variant through the firmware MODE flags.
+- HW timestamps are intentionally not enabled, keeping the receive path simple
+  and avoiding another version-dependent kernel interface.
+- Each bulk-IN URB requests one endpoint packet (normally FS 64 / HS 512
+  bytes). Records crossing packet boundaries are assembled in a bounded
+  512-byte buffer. This supports both old firmware without ZLP and newer
+  firmware with ZLP; receive completion never requires a full FIFO bundle.
+
+## Kernel compatibility
+
+The supported baseline is upstream Linux **4.12 or newer**. The local
+`usbcan_compat.h` isolates CAN DLC helper renames and the independently changed
+echo-SKB signatures in 5.12 and 5.13. Termination control and CAN FD remain
+available across the whole supported range. Vendor kernels with backported APIs
+may differ from their advertised version and should be build-tested separately.
+
+## Build
+
+```bash
+make
+sudo make install
+sudo depmod -a
+sudo modprobe vcan_usb
+```
+
+DKMS: copy this directory to `/usr/src/vcan_usb-1.1.4/`, then
+`dkms add/build/install -m vcan_usb -v 1.1.4`.
+
+## Usage
+
+Connect CAN0-H to CAN1-H and CAN0-L to CAN1-L on an isolated test bus. Use one
+120 Ω termination at each end. If external resistors are already installed,
+change both `termination 120` commands below to `termination 0`.
+
+For classic CAN, configure both interfaces **while down**, then bring them up:
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can1 down
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can1 type can bitrate 500000
+sudo ip link set can0 type can termination 120
+sudo ip link set can1 type can termination 120
+sudo ip link set can0 up
+sudo ip link set can1 up
+```
+
+Run `candump can1` in terminal A and `cansend can0 123#11223344` in terminal B.
+Expected: terminal A prints ID `123` and bytes `11 22 33 44`.
+
+To test CAN FD instead, stop both interfaces and select matching arbitration and
+data bitrates before starting them again:
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can1 down
+sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can1 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can0 up
+sudo ip link set can1 up
+```
+
+See the [SocketCAN manual](../../udocs/linux/SocketCAN使用手册.md) for FD sending and
+the [acceptance route](../../udocs/verify/验证路线.md) for automated coverage.
+
+## Test
+
+Only the hardware stress entry remains:
+
+```bash
+sudo ../tests/vcan_usb/test_vcan_usb.sh
+sudo env BUILD=0 DURATION=20 REOPEN_LOOPS=10 ../tests/vcan_usb/test_vcan_usb.sh
+```
+
+Requires two connected, terminated physical CAN channels and can-utils. The
+suite covers mixed traffic, ISO-TP/J1939, sequence integrity, load, CAN FD and
+close/open regression. Unsupported optional FD tools are reported as skips;
+`REQUIRE_ALL=1` makes missing coverage fail. The old `NFRAMES` setting is no
+longer used. Default execution builds/reloads the driver and leaves interfaces
+down during cleanup. The acceptance script reports passes, failures and skipped optional coverage.

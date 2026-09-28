@@ -1,0 +1,4 @@
+interface:
+  display_name: "VCANDrive Python CAN"
+  short_description: "Build VCANDrive Python CAN, DBC, and CANopen apps"
+  default_prompt: "Use $python-can-skill to build a VCANDrive Python CAN application from this requirement."

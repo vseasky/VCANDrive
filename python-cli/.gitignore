@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+hold-*.out
+hold-*.err
+
+# Local hardware results and release artifacts
+test-results/
+*.ota
+*.upd
+*.bin
+*.hex
+*.exe
+*.dll
+*.zip
+
+# Developer-only regression tests live in local tools/
+tests/unit/
