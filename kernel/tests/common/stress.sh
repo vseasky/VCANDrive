@@ -22,6 +22,7 @@ DRIVER_DIR=$(cd -- "$SCRIPT_DIR/../../$DRIVER" && pwd)
 cd "$DRIVER_DIR" || exit 1
 
 BUILD=${BUILD:-1}
+LOAD_ONLY=0
 SETTLE=${SETTLE:-1}
 J1939_SIZE=${J1939_SIZE:-1024}
 J1939_TIMEOUT=${J1939_TIMEOUT:-12}
@@ -33,8 +34,12 @@ REOPEN_LOOPS=${REOPEN_LOOPS:-5}
 
 usage()
 {
-	printf 'Usage: sudo ./test_%s.sh [--frames COUNT] [--reopen-loops COUNT] [--no-build]\n' "$DRIVER"
+	printf 'Usage: sudo ./test_%s.sh [--frames COUNT] [--reopen-loops COUNT] [--no-build] [--load-only]\n' "$DRIVER"
 	cat <<'EOF'
+
+--load-only builds/loads the driver and checks binding, without sending CAN frames.
+--no-build skips BOTH compilation and loading; use only with an already bound driver.
+Modules loaded by this script use insmod; remove them with rmmod, not modprobe -r.
 
 Runs every SocketCAN acceptance phase on two wired channels. Missing FD or
 required test support is a failure. --frames sets each sender's finite frame
@@ -58,6 +63,7 @@ while (( $# )); do
 			esac
 			shift 2 ;;
 		--no-build) BUILD=0; shift ;;
+		--load-only) LOAD_ONLY=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "unknown option: $1"; usage; exit 2 ;;
 	esac
@@ -168,7 +174,7 @@ cleanup()
 	local rc=$? iface
 	stop_jobs
 	for iface in "${IFACES[@]}"; do
-		ip link set "$iface" down 2>/dev/null || true
+		[[ ${LOAD_ONLY:-0} == 1 ]] || ip link set "$iface" down 2>/dev/null || true
 	done
 	if [[ -n ${TMPDIR_TEST:-} && -d $TMPDIR_TEST ]]; then
 		if (( FAILED || rc != 0 )); then
@@ -817,11 +823,13 @@ phase_reopen()
 }
 
 validate_settings
-for tool in ip make modprobe insmod rmmod cangen candump j1939cat \
-	    isotpsend isotprecv cansequence python3 timeout stdbuf dd od cmp grep \
-	    sort awk; do
-	need "$tool"
-done
+for tool in ip grep sort awk; do need "$tool"; done
+if [[ $BUILD == 1 ]]; then
+	for tool in make modprobe insmod rmmod; do need "$tool"; done
+fi
+if [[ $LOAD_ONLY == 0 ]]; then
+	for tool in cangen candump j1939cat isotpsend isotprecv cansequence python3 timeout stdbuf dd od cmp; do need "$tool"; done
+fi
 
 TMPDIR_TEST=$(mktemp -d "/tmp/${DRIVER}.XXXXXX") || exit 1
 ERROR_LOG="$TMPDIR_TEST/errors.log"
@@ -859,20 +867,42 @@ if [[ $BUILD == 1 ]]; then
 	   (( ${#IFACES[@]} >= 2 )); then
 		echo "  matching $DRIVER module already loaded with two bound interfaces; keeping current binding"
 	else
-		if [[ $DRIVER == vkgs_usb ]]; then
-			modprobe -r gs_usb 2>/dev/null || true
+		if [[ $DRIVER == vkgs_usb && -d /sys/module/gs_usb ]]; then
+			modprobe -r gs_usb 2>/dev/null || rmmod gs_usb || {
+				echo "gs_usb is still loaded; stop programs using its CAN interfaces before switching drivers."
+				exit 1
+			}
 		fi
 		modprobe can-dev || { echo "failed to load can-dev"; exit 1; }
-		rmmod "$DRIVER" 2>/dev/null || true
+		if [[ -d /sys/module/$DRIVER ]]; then
+			rmmod "$DRIVER" || {
+				echo "Cannot unload $DRIVER; stop applications and bring its CAN interfaces down first."
+				exit 1
+			}
+		fi
 		insmod "$module_path" || { echo "insmod failed"; exit 1; }
 		sleep 2
 	fi
 fi
 
-hr "detect two physical interfaces"
+hr "detect physical interfaces"
 detect_ifaces
+if [[ $LOAD_ONLY == 1 ]] && (( ${#IFACES[@]} > 0 )); then
+	for iface in "${IFACES[@]}"; do
+		echo "  $iface -> $(readlink -f "/sys/class/net/$iface/device")"
+	done
+	echo "Driver bound. No CAN frames sent; hardware acceptance has NOT been run."
+	echo "For Python USB, run python3 canctl.py doctor in python-cli/ and follow its release command."
+	exit 0
+fi
 (( ${#IFACES[@]} >= 2 )) || {
 	echo "need two interfaces bound to $DRIVER; found ${#IFACES[@]}"
+	if [[ $BUILD == 0 ]]; then
+		echo "--no-build skips module loading as well as compilation."
+	fi
+	echo "Close Python USB tools, check firmware mode / VM USB passthrough, then load the driver:"
+	echo "sudo bash $SCRIPT_DIR/../$DRIVER/test_$DRIVER.sh --load-only"
+	echo "For temporary insmod modules, use sudo rmmod $DRIVER; modprobe -r may report Module not found."
 	probe_log=$(dmesg 2>/dev/null | tail -80 |
 		grep -E "($DRIVER.*(probe of|host format failed|invalid bulk.*packet size))" |
 		tail -8 || true)
@@ -881,7 +911,7 @@ detect_ifaces
 		echo "$probe_log"
 	fi
 	if [[ $probe_log == *'host format failed: -110'* ]]; then
-		echo "USB control endpoint timed out; reset or reconnect the adapter, then retry with --no-build"
+		echo "USB control endpoint timed out; reset or reconnect the adapter, then retry without --no-build"
 	fi
 	exit 1
 }

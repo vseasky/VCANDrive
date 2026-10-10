@@ -16,7 +16,7 @@ EDS/DCF 与 DBC 不是互换格式。CANopen 的固定 PDO 可额外映射到 DB
 
 ### 2.1 VCANDrive Python USB backend
 
-先按[快速入门](../start/快速入门.md)完成同位率双通道收发，再按[验收测试路线](../verify/验证路线.md)做功能验收。以下两个 transport 任选其一；示例中的模式、通道号和 `network.dbc`/`device.eds` 要换成你的实际设备及项目文件。
+先按[快速入门](01_快速入门.md)完成同位率双通道收发，再按[验收测试路线](10_验证路线.md)做功能验收。以下两个 transport 任选其一；示例中的模式、通道号和 `network.dbc`/`device.eds` 要换成你的实际设备及项目文件。
 
 适用 Windows、Linux、macOS，直接打开 USB interface：
 
@@ -24,13 +24,13 @@ EDS/DCF 与 DBC 不是互换格式。CANopen 的固定 PDO 可额外映射到 DB
 import can
 
 bus = can.Bus(
-    interface="vkgs_usb",   # 1d50:606f；6080 改为 vcan_usb
+    interface="vcan_usb",   # 1d50:6080；GS_CAN (1d50:606f) 改为 vkgs_usb
     channel=0,              # USB bInterfaceNumber
     bitrate=500_000,
 )
 ```
 
-多台设备优先增加 `port_path="2.1.4"`。Linux 下使用前释放同一 interface 的 `vcan_usb`、`vkgs_usb` 或 `gs_usb` 内核模块。
+多台设备优先增加 `port_path="2.1.4"`。Linux 下使用前按 `canctl.py doctor` 输出，解绑目标板卡上被内核驱动占用的接口。
 
 ### 2.2 Linux SocketCAN
 
@@ -72,7 +72,7 @@ payload = definition.encode(
 )
 
 with can.Bus(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     bitrate=500_000,
     fd=definition.is_fd,
@@ -96,7 +96,7 @@ import can
 import cantools
 
 db = cantools.database.load_file("network.dbc", strict=True)
-with can.Bus(interface="vkgs_usb", channel=1, bitrate=500_000, fd=True, data_bitrate=2_000_000) as bus:
+with can.Bus(interface="vcan_usb", channel=1, bitrate=500_000, fd=True, data_bitrate=2_000_000) as bus:
     frame = bus.recv(timeout=1.0)
 if frame is not None:
     try:
@@ -151,7 +151,7 @@ import canopen
 
 network = canopen.Network()
 network.connect(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     port_path="2.1.4",
     bitrate=500_000,
@@ -222,8 +222,8 @@ SocketCAN error frame 与 CANopen EMCY 不同；日志中应分别保留并关�
 
 ## 8. 进一步参考
 
-- [`python-can-skill`](../../python-can-skill/SKILL.md)：直接 USB backend、DBC 与 CANopen 的完整 Python 路由。
-- [`socket-can-skill`](../../socket-can-skill/SKILL.md)：Linux 驱动、PF_CAN、DBC 代码生成与 CANopen 路由。
+- [`python-can-skill`](../python-can-skill/SKILL.md)：直接 USB backend、DBC 与 CANopen 的完整 Python 路由。
+- [`socket-can-skill`](../socket-can-skill/SKILL.md)：Linux 驱动、PF_CAN、DBC 代码生成与 CANopen 路由。
 - [cantools](https://cantools.readthedocs.io/en/stable/)
 - [CAN in Automation：CANopen](https://www.can-cia.org/can-knowledge/canopen)
 - [canopen for Python](https://canopen.readthedocs.io/en/stable/network.html)

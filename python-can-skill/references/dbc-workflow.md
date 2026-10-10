@@ -1,6 +1,6 @@
 # DBC 信号编解码工作流
 
-用户路线：先按[快速入门](../../udocs/start/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/verify/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+用户路线：先按[快速入门](../../udocs/01_快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/10_验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
 
 DBC 描述 CAN 帧中的信号布局、字节序、比例、偏移、单位、枚举值、复用关系和发送节点。它不配置 USB 设备，也不替代 `python-can` 总线生命周期。
 
@@ -10,10 +10,10 @@ DBC 描述 CAN 帧中的信号布局、字节序、比例、偏移、单位、�
 - 只有帧 ID 与原始 payload 时，先使用 raw CAN；不要编造信号定义。
 - CANopen 设备优先使用 EDS/DCF 对象字典。DBC 可用于观察固定 PDO 布局，但不能描述 SDO、NMT、heartbeat 等完整 CANopen 行为。
 
-安装：
+在 `python-cli/` 目录安装到 `canctl.py setup` 创建的环境；Windows 将 `python3` 改为 `py`：
 
 ```bash
-python -m pip install cantools
+python3 canctl.py run -m pip install cantools
 ```
 
 ## 加载并校验数据库
@@ -62,7 +62,7 @@ frame = can.Message(
 )
 
 with can.Bus(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     bitrate=500_000,
     fd=definition.is_fd,
@@ -148,9 +148,9 @@ cantools 会根据 multiplexer 信号选择活动分支。调用方仍应：
 命令行辅助：
 
 ```bash
-candump can0 | python -m cantools decode network.dbc
-python -m cantools list -a network.dbc
-python -m cantools generate_c_source --database-name vehicle network.dbc
+candump can0 | python3 canctl.py run -m cantools decode network.dbc
+python3 canctl.py run -m cantools list -a network.dbc
+python3 canctl.py run -m cantools generate_c_source --database-name vehicle network.dbc
 ```
 
 上游参考：[cantools 文档](https://cantools.readthedocs.io/en/stable/)。

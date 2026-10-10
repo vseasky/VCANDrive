@@ -32,6 +32,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
+#include <linux/ethtool.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
 
@@ -40,8 +41,8 @@
 #include "usbcan_rx_stream.h"
 
 #define VCAN_USB_DRV_VERSION  "1.1.4"
-#define VCAN_USB_MAX_TX_URBS  10
-#define VCAN_USB_MAX_RX_URBS  30
+#define VCAN_USB_MAX_TX_URBS  1
+#define VCAN_USB_MAX_RX_URBS  1
 #define VCAN_USB_CTRL_TIMEOUT 1000
 #define VCAN_USB_MODE_SETTLE_MS 150
 
@@ -61,6 +62,8 @@ struct vcan_usb {
 
 	u8 channel;
 	u32 feature;
+	struct vcan_usb_bsp_device_info device_info;
+	bool have_device_info;
 	unsigned int pipe_in;
 	unsigned int pipe_out;
 	unsigned int rx_buf_sz;
@@ -68,6 +71,7 @@ struct vcan_usb {
 
 	struct can_bittiming_const bt_const;
 	struct can_bittiming_const data_bt_const;
+	struct can_bittiming_const fd_bt_const;
 
 	struct usb_anchor tx_submitted;
 	struct usb_anchor rx_submitted;
@@ -187,8 +191,17 @@ static int vcan_usb_recv(struct vcan_usb *dev, u8 request, void *buf, u16 len)
 			      request | VCAN_USB_BREQ_DIR_READ,
 			      USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_INTERFACE,
 			      0, dev->channel, dma, len, VCAN_USB_CTRL_TIMEOUT);
-	if (ret == len)
-		memcpy(buf, dma, len);
+	if (ret == len) {
+		const struct vcan_usb_hdr *hdr = dma;
+
+		if (len < sizeof(*hdr) ||
+		    le32_to_cpu(hdr->echo_id) != VCAN_USB_ECHO_SETUP ||
+		    (le16_to_cpu(hdr->flags) & 0x7f) != request ||
+		    le16_to_cpu(hdr->opcode) != VCAN_USB_OPCODE(dev->channel, len))
+			ret = -EPROTO;
+		else
+			memcpy(buf, dma, len);
+	}
 	kfree(dma);
 	return ret < 0 ? ret : (ret == len ? 0 : -EIO);
 }
@@ -261,11 +274,34 @@ static void vcan_usb_fill_bittiming(struct vcan_usb_device_bittiming *dbt,
 	dbt->brp = cpu_to_le32(bt->brp - 1);
 }
 
+/* CAN core exposes one nominal range; validate the mode-specific FD
+ * range again before sending timing or starting a cached configuration.
+ */
+static bool vcan_usb_timing_valid(const struct can_bittiming *bt,
+		const struct can_bittiming_const *limits)
+{
+	u32 tseg1 = bt->prop_seg + bt->phase_seg1;
+
+	return limits->brp_inc && bt->brp >= limits->brp_min &&
+		bt->brp <= limits->brp_max &&
+		!((bt->brp - limits->brp_min) % limits->brp_inc) &&
+		tseg1 >= limits->tseg1_min && tseg1 <= limits->tseg1_max &&
+		bt->phase_seg2 >= limits->tseg2_min &&
+		bt->phase_seg2 <= limits->tseg2_max &&
+		bt->sjw && bt->sjw <= limits->sjw_max &&
+		bt->sjw <= bt->phase_seg2;
+}
+
 static int vcan_usb_set_bittiming(struct net_device *netdev)
 {
 	struct vcan_usb *dev = netdev_priv(netdev);
 	struct vcan_usb_device_bittiming dbt = { 0 };
 
+	if ((dev->can.ctrlmode & CAN_CTRLMODE_FD) &&
+	    !vcan_usb_timing_valid(&dev->can.bittiming, &dev->fd_bt_const)) {
+		netdev_err(netdev, "nominal timing outside firmware FD arbitration limits\n");
+		return -EINVAL;
+	}
 	vcan_usb_fill_bittiming(&dbt, &dev->can.bittiming);
 	return vcan_usb_send(dev, VCAN_USB_BREQ_BITTIMING, &dbt, sizeof(dbt));
 }
@@ -609,10 +645,10 @@ static void vcan_usb_parse_bulk(struct vcan_usb *dev, const u8 *buf, int len)
 			if (size < sizeof(struct vcan_usb_device_load))
 				ndev->stats.rx_length_errors++;
 			break; /* bus-load telemetry not exposed */
+		case VCAN_USB_ECHO_TX:
+			break; /* TX echo is not an RX data frame. */
 		default:
-			/* unknown marker but size/channel are sane: skip exactly
-			 * this frame and resync on the next (length-prefix win).
-			 */
+			/* The stream validator rejects unknown markers before delivery. */
 			ndev->stats.rx_frame_errors++;
 			netdev_dbg(ndev, "rx unknown echo_id 0x%08x, skipping\n",
 				   echo_id);
@@ -628,19 +664,87 @@ static int vcan_usb_record_size(const u8 *buf, int len)
 
 	if (len < VCAN_USB_HDR_LEN)
 		return -1;
+	switch (le32_to_cpu(hdr->echo_id)) {
+	case VCAN_USB_ECHO_RX:
+	case VCAN_USB_ECHO_TX: {
+		u16 flags = le16_to_cpu(hdr->flags);
+		unsigned int expected = offsetof(struct vcan_usb_host_frame, data) +
+			((flags & VCAN_USB_FLAG_FD) ? 64 : 8);
+
+		if (((flags & VCAN_USB_FLAG_FD) && (flags & VCAN_USB_FLAG_RTR)) ||
+		    (flags & ~0x7f) ||
+		    VCAN_USB_OPCODE_SIZE(le16_to_cpu(hdr->opcode)) != expected)
+			return -1;
+		break;
+	}
+	case VCAN_USB_ECHO_STATE: {
+		u16 flags = le16_to_cpu(hdr->flags);
+		u16 size = VCAN_USB_OPCODE_SIZE(le16_to_cpu(hdr->opcode));
+
+		if (flags == VCAN_USB_BREQ_CAN_STATE)
+			return size >= sizeof(struct vcan_usb_device_state) ? size : -1;
+		if (flags == VCAN_USB_BREQ_BERR)
+			return size >= sizeof(struct vcan_usb_device_berr) ? size : -1;
+		return -1;
+	}
+	case VCAN_USB_ECHO_LOAD:
+		if (VCAN_USB_OPCODE_SIZE(le16_to_cpu(hdr->opcode)) <
+		    sizeof(struct vcan_usb_device_load))
+			return -1;
+		break;
+	default:
+		return -1;
+	}
 	return VCAN_USB_OPCODE_SIZE(le16_to_cpu(hdr->opcode));
+}
+
+static int vcan_usb_stream_size(void *context, const u8 *buf, int len)
+{
+	struct vcan_usb *dev = context;
+	const struct vcan_usb_hdr *hdr = (const void *)buf;
+
+	if (len < VCAN_USB_HDR_LEN) {
+		switch (le32_to_cpu(hdr->echo_id)) {
+		case VCAN_USB_ECHO_RX:
+		case VCAN_USB_ECHO_TX:
+		case VCAN_USB_ECHO_STATE:
+		case VCAN_USB_ECHO_LOAD:
+			return 0;
+		default:
+			return -1;
+		}
+	}
+	if (VCAN_USB_OPCODE_CHANNEL(le16_to_cpu(hdr->opcode)) != dev->channel)
+		return -1;
+	return vcan_usb_record_size(buf, len);
 }
 
 static void vcan_usb_receive_record(void *context, const u8 *data, int len)
 {
+	struct vcan_usb *dev = context;
+
+	netdev_dbg(dev->netdev, "rx record transfer=%llu origin=%llu offset=%u consumed=%d\n",
+		   dev->rx_stream.sequence, dev->rx_stream.origin_sequence,
+		   dev->rx_stream.origin_offset, len);
 	vcan_usb_parse_bulk(context, data, len);
 }
 
 static void vcan_usb_receive_packet(struct vcan_usb *dev, const u8 *data, int len)
 {
-	if (!usbcan_rx_feed(&dev->rx_stream, data, len, VCAN_USB_HDR_LEN,
-			   vcan_usb_record_size, vcan_usb_receive_record, dev))
+	int off;
+
+	netdev_dbg(dev->netdev, "rx transfer=%llu actual=%d mps=%u carry=%u needed=%u\n",
+		   dev->rx_stream.sequence + 1, len, dev->rx_buf_sz,
+		   dev->rx_stream.used, dev->rx_stream.needed);
+	for (off = 0; off < len; off += 32)
+		netdev_dbg(dev->netdev, "rx raw offset=%d %*ph\n", off,
+			   min(len - off, 32), data + off);
+	if (!usbcan_rx_feed(&dev->rx_stream, data, len, VCAN_USB_HDR_LEN, true,
+			   vcan_usb_stream_size, vcan_usb_receive_record, dev)) {
 		dev->netdev->stats.rx_length_errors++;
+		netdev_dbg(dev->netdev, "rx discard transfer=%llu: invalid header/length/channel or partial ZLP\n",
+			   dev->rx_stream.sequence);
+	}
 }
 
 static void vcan_usb_read_bulk_callback(struct urb *urb)
@@ -659,6 +763,7 @@ static void vcan_usb_read_bulk_callback(struct urb *urb)
 	case -ENOENT:
 	case -ECONNRESET:
 	case -ESHUTDOWN:
+		dev->rx_stream.used = dev->rx_stream.needed = 0;
 		return;
 	default:
 		dev->rx_stream.used = dev->rx_stream.needed = 0;
@@ -1057,6 +1162,96 @@ static void vcan_usb_load_bt_const(struct can_bittiming_const *out,
 	out->brp_inc = le32_to_cpu(in->brp_inc);
 }
 
+static ssize_t uid_show(struct device *device,
+		struct device_attribute *attr, char *buf)
+{
+	struct vcan_usb *dev = netdev_priv(to_net_dev(device));
+	return scnprintf(buf, PAGE_SIZE, "%08x%08x%08x%08x\n",
+		le32_to_cpu(dev->device_info.uid[0]),
+		le32_to_cpu(dev->device_info.uid[1]),
+		le32_to_cpu(dev->device_info.uid[2]),
+		le32_to_cpu(dev->device_info.uid[3]));
+}
+static DEVICE_ATTR_RO(uid);
+
+static ssize_t uuid_show(struct device *device,
+		struct device_attribute *attr, char *buf)
+{
+	struct vcan_usb *dev = netdev_priv(to_net_dev(device));
+	return scnprintf(buf, PAGE_SIZE, "%08x%08x%08x%08x\n",
+		le32_to_cpu(dev->device_info.uuid[0]),
+		le32_to_cpu(dev->device_info.uuid[1]),
+		le32_to_cpu(dev->device_info.uuid[2]),
+		le32_to_cpu(dev->device_info.uuid[3]));
+}
+static DEVICE_ATTR_RO(uuid);
+
+static ssize_t fw_version_show(struct device *device,
+		struct device_attribute *attr, char *buf)
+{
+	struct vcan_usb *dev = netdev_priv(to_net_dev(device));
+	u32 value = le32_to_cpu(dev->device_info.sw_version);
+
+	return scnprintf(buf, PAGE_SIZE, "v%u.%u.%u.%u\n", (value >> 24) & 0xff, (value >> 16) & 0xff,
+		(value >> 8) & 0xff, value & 0xff);
+}
+static DEVICE_ATTR_RO(fw_version);
+
+static ssize_t hw_version_show(struct device *device,
+		struct device_attribute *attr, char *buf)
+{
+	struct vcan_usb *dev = netdev_priv(to_net_dev(device));
+	u32 value = le32_to_cpu(dev->device_info.hw_version);
+
+	return scnprintf(buf, PAGE_SIZE, "v%u.%u\n", (value >> 8) & 0xff, value & 0xff);
+}
+static DEVICE_ATTR_RO(hw_version);
+
+static ssize_t raw_hw_version_show(struct device *device,
+		struct device_attribute *attr, char *buf)
+{
+	struct vcan_usb *dev = netdev_priv(to_net_dev(device));
+	u32 value = le32_to_cpu(dev->device_info.hw_version);
+
+	return scnprintf(buf, PAGE_SIZE, "0x%08x\n", value);
+}
+static DEVICE_ATTR_RO(raw_hw_version);
+
+static struct attribute *usbcan_info_attrs[] = {
+	&dev_attr_uid.attr,
+	&dev_attr_uuid.attr,
+	&dev_attr_fw_version.attr,
+	&dev_attr_hw_version.attr,
+	&dev_attr_raw_hw_version.attr,
+	NULL,
+};
+
+static const struct attribute_group usbcan_info_group = {
+	.name = "device_info",
+	.attrs = usbcan_info_attrs,
+};
+
+static void vcan_usb_get_drvinfo(struct net_device *netdev,
+		struct ethtool_drvinfo *info)
+{
+	struct vcan_usb *dev = netdev_priv(netdev);
+	u32 sw = le32_to_cpu(dev->device_info.sw_version);
+
+	strscpy(info->driver, "vcan_usb", sizeof(info->driver));
+	strscpy(info->version, VCAN_USB_DRV_VERSION, sizeof(info->version));
+	usb_make_path(dev->udev, info->bus_info, sizeof(info->bus_info));
+	if (dev->have_device_info)
+		snprintf(info->fw_version, sizeof(info->fw_version), "v%u.%u.%u.%u",
+			(sw >> 24) & 0xff, (sw >> 16) & 0xff,
+			(sw >> 8) & 0xff, sw & 0xff);
+	else
+		strscpy(info->fw_version, "unavailable", sizeof(info->fw_version));
+}
+
+static const struct ethtool_ops vcan_usb_ethtool_ops = {
+	.get_drvinfo = vcan_usb_get_drvinfo,
+};
+
 static void vcan_usb_log_device_info(struct vcan_usb *dev,
 				     const struct vcan_usb_bsp_device_info *info)
 {
@@ -1067,15 +1262,24 @@ static void vcan_usb_log_device_info(struct vcan_usb *dev,
 	hw_version = le32_to_cpu(info->hw_version);
 
 	dev_info(&dev->intf->dev,
-		 "ch%u device info: sw=v%u.%u.%u "
+		 "ch%u device info: sw=v%u.%u.%u.%u "
 		 "hw=v%u.%u isolated=%u usb=%s\n",
-		 dev->channel,
+		 dev->channel, (sw_version >> 24) & 0xff,
 		 (sw_version >> 16) & 0xff, (sw_version >> 8) & 0xff,
 		 sw_version & 0xff,
 		 (hw_version >> 8) & 0xff, hw_version & 0xff,
 		 !!((hw_version >> 24) & 0x01),
 		 dev->udev->speed == USB_SPEED_HIGH ? "HS" :
 		 dev->udev->speed == USB_SPEED_FULL ? "FS" : "other");
+	dev_info(&dev->intf->dev, "UID=%08x%08x%08x%08x UUID=%08x%08x%08x%08x\n",
+		le32_to_cpu(info->uid[0]),
+		le32_to_cpu(info->uid[1]),
+		le32_to_cpu(info->uid[2]),
+		le32_to_cpu(info->uid[3]),
+		le32_to_cpu(info->uuid[0]),
+		le32_to_cpu(info->uuid[1]),
+		le32_to_cpu(info->uuid[2]),
+		le32_to_cpu(info->uuid[3]));
 }
 
 static int vcan_usb_probe(struct usb_interface *intf,
@@ -1132,6 +1336,7 @@ static int vcan_usb_probe(struct usb_interface *intf,
 	usb_set_intfdata(intf, dev);
 	SET_NETDEV_DEV(netdev, &intf->dev);
 	netdev->netdev_ops = &vcan_usb_netdev_ops;
+	netdev->ethtool_ops = &vcan_usb_ethtool_ops;
 	netdev->flags |= IFF_ECHO;
 	netdev->dev_id = dev->channel;
 
@@ -1155,12 +1360,17 @@ static int vcan_usb_probe(struct usb_interface *intf,
 	}
 
 	feature = le32_to_cpu(bt_const.feature);
+	/* Never invent FD timing ranges from the Classic constants. */
+	if (!(feature & VCAN_USB_FEATURE_BT_CONST_EXT))
+		feature &= ~VCAN_USB_FEATURE_FD;
 	dev->feature = feature;
 	vcan_usb_load_bt_const(&dev->bt_const, &bt_const.btc);
 
 	dev->can.clock.freq = le32_to_cpu(bt_const.fclk_can);
-	if (!dev->can.clock.freq)
-		dev->can.clock.freq = VCAN_USB_CLOCK_HZ;
+	if (!dev->can.clock.freq) {
+		ret = -EPROTO;
+		goto err_free;
+	}
 	dev->can.bittiming_const = &dev->bt_const;
 	dev->can.do_set_bittiming = vcan_usb_set_bittiming;
 	dev->can.do_set_mode = vcan_usb_set_mode;
@@ -1198,6 +1408,11 @@ static int vcan_usb_probe(struct usb_interface *intf,
 					"bt_const_ext read failed: %d\n", ret);
 				goto err_free;
 			}
+			if (le32_to_cpu(ext.fclk_can) != dev->can.clock.freq) {
+				ret = -EPROTO;
+				goto err_free;
+			}
+			vcan_usb_load_bt_const(&dev->fd_bt_const, &ext.btc);
 			vcan_usb_load_bt_const(&dev->data_bt_const, &ext.dbtc);
 			dev->can.data_bittiming_const = &dev->data_bt_const;
 		}
@@ -1226,6 +1441,12 @@ static int vcan_usb_probe(struct usb_interface *intf,
 
 	netdev->min_mtu = CAN_MTU;
 	netdev->max_mtu = (feature & VCAN_USB_FEATURE_FD) ? CANFD_MTU : CAN_MTU;
+
+	if (have_info) {
+		dev->device_info = info;
+		dev->have_device_info = true;
+		netdev->sysfs_groups[0] = &usbcan_info_group;
+	}
 
 	ret = register_candev(netdev);
 	if (ret) {

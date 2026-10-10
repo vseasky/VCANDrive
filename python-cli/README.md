@@ -1,75 +1,36 @@
 # Python CAN USB 后端
 
-首次使用请先按[快速入门](../udocs/start/快速入门.md)完成模式识别、驱动安装与第一帧收发。
+Windows、Linux、macOS 使用同一个入口和同一套测试参数。在本目录执行；先看[从零开始的快速入门](../udocs/01_快速入门.md)，报错看[常见问题](../udocs/02_常见问题.md)。
 
-本目录包含两个独立安装、API 一致的 `python-can` 后端：
-
-| 目录 | 固件模式 | `can.Bus` 接口名 |
+| 模式 | USB ID | 后端 |
 |---|---|---|
-| `vcan_usb/` | VCAN，USB ID `1d50:6080` | `vcan_usb` |
-| `vkgs_usb/` | VKGS/gs_usb，USB ID `1d50:606f` | `vkgs_usb` |
+| GS_CAN | `1d50:606f` | `vkgs_usb` |
+| VCAN | `1d50:6080` | `vcan_usb` |
 
-只安装与设备当前固件模式对应的包。
-
-协议编解码模块可单独导入；`python-can` 总线层在访问 `vcan_usb_bus` 或
-`vkgs_usb_bus` 时加载。USB 速率优先读取设备协商结果。若后端未提供速率，
-仅凭 64 字节端点无法区分 FS 与 HS，`info()` 会报告 `unknown`。
-`usb_speed_source` 标明速率来自协商结果还是端点推断，IN/OUT 包长也会返回。
-依赖方向和边界约定见[USB 驱动分层与速率](../docs/development/USB驱动分层与速率.md)。
-
-## Linux 快速开始
+Linux/macOS：
 
 ```bash
-python3 -m venv .venv-linux
-.venv-linux/bin/python -m pip install --upgrade pip setuptools wheel
-.venv-linux/bin/python -m pip install -e ./vkgs_usb
-sudo ./canctl --interface vkgs_usb list
+python3 canctl.py setup
+python3 canctl.py doctor
+python3 canctl.py --interface vkgs_usb list
+python3 canctl.py --interface vkgs_usb --channel 0 info
 ```
 
-VCAN 将 `vkgs_usb` 改为 `vcan_usb`。
-
-## Windows 快速开始
-
-先为设备的每个 CAN `MI_xx` interface 绑定 WinUSB，然后执行：
+Windows（每路 MI 接口先绑定 WinUSB）：
 
 ```powershell
-py --list
-py -3 -m venv .venv-win
-.\.venv-win\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
-.\.venv-win\Scripts\python.exe -m pip install -e .\vkgs_usb
-.\.venv-win\Scripts\python.exe .\tools\canctl.py --interface vkgs_usb list
+py canctl.py setup
+py canctl.py doctor
+py canctl.py --interface vkgs_usb list
+py canctl.py --interface vkgs_usb --channel 0 info
 ```
 
-不要指定 `py -3.10`，除非 `py --list` 确认本机已安装该版本。
+Linux 首次配置普通用户权限：`sudo python3 canctl.py permissions --apply`，然后重新插拔设备。若 doctor 显示内核占用，按输出用 release 释放选定板卡；日常命令不用 sudo。macOS 先安装原生 libusb，例如 `brew install libusb`。
 
-## 按用户路线验证
+双通道接线完成后运行 `python3 canctl.py test --interface vkgs_usb --frames 2000`；Windows 只替换开头为 `py`。测试会配置两路终端、位率并发送经典/FD 帧，详见[测试说明](tests/README.md)。仅 list 成功不代表通道可打开或总线能收发。
 
-先在当前模式下运行 `list`，确认能看到实际的两路 `channel`；再按照[快速入门](../udocs/start/快速入门.md)在两个终端完成一帧收发。两路总线接好后，从 `python-cli/` 目录运行完整验收：
+setup 默认安装两个独立后端，也可指定 `--interface vkgs_usb`。自动使用用户本地虚拟环境，避免共享盘符号链接问题；已有解释器可用 `VCANDRIVE_PYTHON` 指定。源码目录需要保留，因为安装采用 editable 模式。
 
-```bash
-sudo ./can-test --interface vkgs_usb
-```
+快捷包装为 Linux/macOS 的 `./canctl`、`./can-test` 和 Windows 的 `.\canctl.cmd`、`.\can-test.cmd`。运行自己的脚本用 `canctl.py run demo.py`，无需激活环境。
 
-```powershell
-.\.venv-win\Scripts\python.exe .\tests\hardware_test.py --interface vkgs_usb
-```
-
-VCAN 模式将 `vkgs_usb` 改为 `vcan_usb`。默认每发送端每阶段 10000 帧；通过 `--frames` 和 `--rounds` 延长高负载测试。Linux 内核专项的下一步见[验收测试路线](../udocs/verify/验证路线.md)。
-
-Windows 上每个 `Bus` 独立打开目标 `MI_xx` WinUSB interface。两个终端可分别操作同一
-物理设备的 channel 0 和 channel 1；同一个 channel 仍只能由一个进程占用。
-
-`canctl` 和 `can-test` 是 Linux Bash 包装入口，不是 pip 生成的 console script。
-Windows 直接调用对应 Python 文件。
-
-完整文档：
-
-- [PythonCAN 使用手册](../udocs/python/PythonCAN使用手册.md)
-- [Python 终端工具](../udocs/python/Python终端工具.md)
-- [Python API 参考](../udocs/python/PythonAPI参考.md)
-- [Python API 双通道验证](../udocs/python/API验证.md)
-- [独立 Windows 设备管理器](../udocs/start/设备管理器.md)
-
-使用说明和公开 API 统一从 [文档导航](../udocs/README.md) 查阅。
-
-Python 窗口压力、重复打开与运行参数见[测试说明](tests/README.md)。
+协议编解码可独立导入，Bus 在使用时加载。API、USB 速率来源、设备定位与会话规则见[Python CAN 手册](../udocs/05_PythonCAN使用手册.md)和[API 参考](../udocs/07_PythonAPI参考.md)。脚本为仓库工具，不随两个驱动包发布。

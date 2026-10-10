@@ -1,6 +1,6 @@
 # Linux 内核驱动安装
 
-先按[快速入门](../start/快速入门.md)确认设备当前模式和接线。本页只处理 Linux 驱动安装与实际绑定检查；安装后按[SocketCAN 使用手册](SocketCAN使用手册.md)收发第一帧，再按[验收路线](../verify/验证路线.md)做完整测试。
+先按[快速入门](01_快速入门.md)确认设备当前模式和接线。本页只处理 Linux 驱动安装与实际绑定检查；安装后按[SocketCAN 使用手册](09_SocketCAN使用手册.md)收发第一帧，再按[验收路线](10_验证路线.md)做完整测试。
 
 ## 1. 确认设备模式
 
@@ -106,6 +106,22 @@ done
 
 预期显示 `vcan_usb` 或 `vkgs_usb`。`can0/can1` 由 Linux 动态命名，不能仅凭编号推断物理 CAN1/CAN2；多设备部署应通过 sysfs USB 拓扑或持久化命名规则固定映射。
 
+### 5.1 确认身份查询功能已加载
+
+```bash
+ethtool -i can0
+cat /sys/class/net/can0/device_info/uid
+cat /sys/class/net/can0/device_info/uuid
+cat /sys/class/net/can0/device_info/fw_version
+cat /sys/class/net/can0/device_info/hw_version
+```
+
+`ethtool` 需另行安装（Ubuntu/Debian：`sudo apt install ethtool`）。详细字段见[SocketCAN 手册](09_SocketCAN使用手册.md#板卡-uid--uuid-和版本)。身份属性不要求接口 UP。
+
+编译/安装新 `.ko` 不会自动替换已加载模块；`modinfo` 也不能单独证明当前内存中的模块包含新功能。更新后需停用该模块管理的全部 CAN 通道，退出使用它们的程序，再卸载/加载对应模块或重新启动系统；注意这会影响同模块管理的所有板卡。按本页安装步骤加载新构建后再查身份。
+
+没有 `device_info` 时，先确认实际绑定的是当前版本的 `vcan_usb` / `vkgs_usb`，并检查驱动日志中的身份查询错误。该现象不能直接判为设备没有 UID/UUID；标准 `gs_usb` 不提供本项目的身份属性。
+
 ## 6. 首次配置与收发
 
 ```bash
@@ -149,7 +165,7 @@ cansend can0 123##00001020304050607   # FD, BRS off
 cansend can0 123##10001020304050607   # FD, BRS on
 ```
 
-两端必须同时匹配仲裁段、数据段、ISO/non-ISO 和每帧 BRS 设置。
+两端必须同时匹配仲裁段、数据段、ISO/non-ISO 和每帧 BRS 设置。示例速率需服从固件能力。若出现 `nominal timing outside firmware FD arbitration limits`，核对固件支持的位率及所设仲裁段和数据段参数。
 
 ## 8. Secure Boot 与模块签名
 
@@ -168,14 +184,14 @@ modinfo vcan_usb   # 或 vkgs_usb
 
 ## 10. 自动硬件验收
 
-先按[快速入门](../start/快速入门.md)完成两路接线、终端和一帧收发，再在隔离总线上从仓库根目录运行**当前模式对应的一个**脚本：
+先按[快速入门](01_快速入门.md)完成两路接线、终端和一帧收发，再在隔离总线上从仓库根目录运行**当前模式对应的一个**脚本：
 
 ```bash
 sudo bash ./kernel/tests/vcan_usb/test_vcan_usb.sh
 sudo bash ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
 ```
 
-脚本默认会构建/重载驱动并重配接口。它测试 250 kbit/s 与 1 Mbit/s 混合帧、ECU 流量、ISO-TP、J1939 TP、序号、FD、负载与重复打开。每个发送端、每个流量阶段默认 10000 帧；高负载长测可追加 `--frames 20000`，已加载驱动时可加 `--no-build`。普通压力流量按背压发送，缺少 FD 或必需工具会失败；完整参数见[验收测试路线](../verify/验证路线.md)。
+脚本默认会构建/重载驱动并重配接口。它测试 250 kbit/s 与 1 Mbit/s 混合帧、ECU 流量、ISO-TP、J1939 TP、序号、FD、负载与重复打开。每个发送端、每个流量阶段默认 10000 帧；高负载长测可追加 `--frames 20000`，已加载驱动时可加 `--no-build`。普通压力流量按背压发送，缺少 FD 或必需工具会失败；完整参数见[验收测试路线](10_验证路线.md)。
 
 ## 11. 卸载与切换 Python backend
 

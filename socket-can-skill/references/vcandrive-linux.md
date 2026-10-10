@@ -1,183 +1,69 @@
-# VCANDrive Linux 接入与运维参考
+# VCANDrive Linux 使用参考
 
-用户路线：先按[快速入门](../../udocs/start/快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../../udocs/verify/验证路线.md)验收 Linux 内核路径，最后使用本页 API。
+首次安装从[Linux 驱动安装](../../udocs/08_Linux内核驱动安装.md)开始；下面的命令在仓库根目录执行。示例以 VCAN 模式为主，GS_CAN 用户将 `vcan_usb` 改为 `vkgs_usb`。
 
-## 模式与驱动
+## 确认设备与驱动
 
-| 设备模式 | USB ID | 模块 | 源码目录 | 备注 |
-|---|---|---|---|---|
-| VCAN 原生 | `1d50:6080` | `vcan_usb` | `kernel/vcan_usb` | VCAN 自有 USB 协议 |
-| GS_USB / VKGS | `1d50:606f` | `vkgs_usb` | `kernel/vkgs_usb` | 可能被内核 `gs_usb` 先绑定 |
-
-每个 USB interface 注册一个 SocketCAN netdevice。`can0/can1` 是 Linux 动态分配的名字，不保证与面板通道号一致。
-
-## 安装前检查
+| 模式 | USB ID | 模块 |
+|---|---|---|
+| VCAN | `1d50:6080` | `vcan_usb` |
+| GS_CAN | `1d50:606f` | `vkgs_usb` |
 
 ```bash
-uname -r
-lsusb | grep -Ei '1d50:6080|1d50:606f'
+lsusb
 ip -br link show type can
-lsmod | grep -E '(^|_)vcan_usb|(^|_)vkgs_usb|(^|_)gs_usb'
 ```
 
-Ubuntu/Debian 依赖：
+如果没有出现两路 `canX`，先按[驱动安装](../../udocs/08_Linux内核驱动安装.md)检查 USB 模式、编译依赖和实际绑定的模块。GS_CAN 可能先被系统 `gs_usb` 绑定。`can0/can1` 是动态接口名，不能仅凭数字判断板内通道。
+
+测试脚本可编译、加载并检查绑定；仅做加载检查时运行：
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential linux-headers-$(uname -r) \
-    iproute2 can-utils dkms usbutils
-test -e /lib/modules/$(uname -r)/build && echo "kernel headers OK"
+sudo bash kernel/tests/vcan_usb/test_vcan_usb.sh --load-only
 ```
 
-必须使用与当前运行内核匹配的 headers。Secure Boot 可能拒绝未签名的 out-of-tree 模块，应按发行版流程签名或调整启动策略，不要把签名失败误判为 CAN 参数错误。
+临时加载的模块若未安装到系统模块目录，卸载时用 `sudo rmmod vcan_usb`；`modprobe -r` 提示找不到模块不代表它没有加载。GS_CAN 对应 `vkgs_usb`。需要切换至 Python USB 时，先关闭使用接口的程序，再按[常见问题](../../udocs/02_常见问题.md)释放目标板卡的内核绑定。
 
-## 手动构建与加载
+## 定位唯一板卡和通道
 
-VCAN 原生：
+按[身份查询](../../udocs/09_SocketCAN使用手册.md#定位唯一板卡和通道)读取每个 `canX` 对应的 UUID 与板内通道号。完整 UUID 定位板卡，`UUID:通道号` 定位唯一通道。插拔或重启后重新核对 `canX` 映射。
 
-```bash
-cd kernel/vcan_usb
-make
-sudo make install
-sudo depmod -a
-sudo modprobe vcan_usb
-```
+## 配置与收发
 
-VKGS：
-
-```bash
-sudo modprobe -r gs_usb
-cd kernel/vkgs_usb
-make
-sudo make install
-sudo depmod -a
-sudo modprobe vkgs_usb
-```
-
-先临时卸载 `gs_usb` 验证 `vkgs_usb`，再决定是否持久屏蔽。永久屏蔽前确认系统没有其他必须使用主线 `gs_usb` 的设备；配置 `/etc/modprobe.d/blacklist-gs_usb.conf`：
-
-```text
-blacklist gs_usb
-install gs_usb /bin/false
-```
-
-之后按发行版需要更新 initramfs 并重新插拔。恢复时删除该文件、更新 initramfs，再加载 `gs_usb`。
-
-## 确认接口归属
-
-```bash
-for n in /sys/class/net/can*; do
-    [ -e "$n" ] || continue
-    printf '%s usb=%s driver=%s\n' \
-        "$(basename "$n")" \
-        "$(basename "$(readlink -f "$n/device")")" \
-        "$(basename "$(readlink -f "$n/device/driver")")"
-done
-```
-
-应用配置只保存 `canX` 时，需要另外提供稳定命名或启动时的 sysfs 映射检查，避免插拔后误连另一通道。
-
-## 经典 CAN 配置
+先确认两路 CANH/CANL 接线、位率一致，且总线两端各有一个 120 Ω 终端。已有外置终端时不要重复开启内置终端。在接口关闭时配置：
 
 ```bash
 sudo ip link set can0 down
-sudo ip link set can0 type can \
-    bitrate 500000 sample-point 0.75 restart-ms 100
-sudo ip link set can0 txqueuelen 1000
-sudo ip link set can0 up
-ip -details link show can0
-```
-
-## CAN FD 配置
-
-```bash
-sudo ip link set can0 down
-sudo ip link set can0 type can \
-    bitrate 1000000 sample-point 0.75 \
-    dbitrate 5000000 dsample-point 0.75 \
-    fd on fd-non-iso off restart-ms 100
-sudo ip link set can0 txqueuelen 1000
-sudo ip link set can0 up
-ip -details link show can0
-```
-
-设备 CAN 时钟为 80 MHz。若速率和采样点无法组成合法位时序，`ip` 会拒绝配置；先去掉显式采样点或选择常见速率，再从 `ip -details` 读取实际 TQ/BRP/TSEG/SJW。
-
-## 终端电阻与控制模式
-
-只在物理总线两个末端启用 120 Ω，断电测量两个终端并联通常约 60 Ω：
-
-```bash
-sudo ip link set can0 down
-sudo ip link set can0 type can termination 120
 sudo ip link set can0 type can bitrate 500000 restart-ms 100
 sudo ip link set can0 up
-ip -details link show can0 | grep termination
+ip -details link show can0
 ```
 
-可在接口 down 时组合设置：
-
-```bash
-sudo ip link set can0 type can bitrate 500000 listen-only on
-sudo ip link set can0 type can bitrate 500000 loopback on
-sudo ip link set can0 type can bitrate 500000 one-shot on
-sudo ip link set can0 type can bitrate 500000 berr-reporting on
-```
-
-- `listen-only` 不发送 ACK，适合被动监听。
-- `loopback` 是控制器内部回环，不是 socket 自收发回显。
-- `one-shot` 禁止 CAN 控制器自动重传。
-- `berr-reporting` 允许驱动上报协议错误帧；应用仍需设置 error filter 才能接收。
-
-## can-utils 快速验证
+另一端若为 `can1`，以相同位率启用。先在一个终端接收，再在另一个终端发送：
 
 ```bash
 candump -ta -e can1
-cansend can0 123#11223344
-cansend can0 18DAF110#01020304
-cansend can0 123##00001020304050607
-cansend can0 123##10001020304050607
 ```
-
-CAN FD 使用 `##`；后面的 flags 低位控制 BRS。先启动接收端，再从另一物理节点发送，确保总线上存在 ACK 节点。
-
-记录、过滤与回放：
 
 ```bash
-candump -L can0 > capture.log
-candump 'can0,123:7FF'
-canplayer -I capture.log
-cansniffer can0
-canbusload can0@500000
+cansend can0 123#11223344
 ```
 
-高负载 `cangen` 会真实占用总线，不要在未知或生产网络上直接运行。
+接收端应看到 ID `123` 与数据 `11 22 33 44`。如果超时或错误计数增长，先查[常见问题](../../udocs/02_常见问题.md)中的接线、终端、ACK 和位率问题。
 
-## 状态诊断
+CAN FD 的位率和发送格式见[SocketCAN 手册](../../udocs/09_SocketCAN使用手册.md)。状态查看命令：
 
 ```bash
 ip -details -statistics link show can0
 candump -e can0
-sudo dmesg --follow
 ```
 
-- TX error 持续增长：优先检查 ACK 节点、位速率、接线和终端。
-- RX error 持续增长：检查采样点、信号质量、H/L 和干扰。
-- 经典 CAN 正常而 FD 失败：核对数据段速率、BRS 与 ISO/non-ISO。
-- BUS-OFF：先停止发送并修复物理问题，再等待 `restart-ms` 或执行 `ip link set can0 type can restart`。
-- `Device or resource busy`：检查 Python/libusb、另一模块或进程是否仍占用 interface。
+## 完整硬件验收
 
-## 仓库硬件验收
-
-两通道接在同一总线且终端正确后：
+第一帧成功后，在隔离测试总线上运行：
 
 ```bash
-sudo ./kernel/tests/vcan_usb/test_vcan_usb.sh
-sudo bash ./kernel/tests/vkgs_usb/test_vkgs_usb.sh
+sudo bash kernel/tests/vcan_usb/test_vcan_usb.sh --frames 2000
 ```
 
-可用 `--frames 20000` 延长高负载测试；`--frames` 统一控制每个发送端、每个按帧数运行的流量项目，默认 10000。普通压力流量无固定间隔，队列满时按背压等待；ECU 周期场景仍保留指定周期。已加载驱动时可加 `--no-build`。脚本会重配接口、启用终端并发送真实流量，只在隔离测试总线上执行。缺少 FD 或必需工具会判失败，不会给出部分通过。
-
-## 与 Python USB 后端切换
-
-同一 USB interface 不能同时由 SocketCAN 与 Python backend 使用。切到 Python 前先停接口并卸载占用模块；切回 SocketCAN 前确保所有 Python `Bus` 已 `shutdown()`，再加载与 VID:PID 匹配的模块。
+这条命令会编译或加载所需驱动、重配接口并发送真实流量。`--no-build` 会同时跳过编译和加载，只适用于两路接口已经绑定到当前驱动的情况；若提示找到 0 路，先运行上面的 `--load-only`，再检查绑定。GS_CAN 使用 `kernel/tests/vkgs_usb/test_vkgs_usb.sh`。成功标志、测试范围和保存结果的方法见[验收路线](../../udocs/10_验证路线.md)。

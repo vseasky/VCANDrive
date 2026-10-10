@@ -10,6 +10,8 @@ struct usbcan_rx_stream {
 	u8 data[USBCAN_RX_RECORD_MAX];
 	unsigned int used;
 	unsigned int needed;
+	unsigned long long sequence, origin_sequence;
+	unsigned int origin_offset;
 };
 
 /* Feed exactly one USB packet. Full packets need no ZLP to complete the URB.
@@ -18,19 +20,26 @@ struct usbcan_rx_stream {
  * Return false for malformed/truncated records so the caller can count errors.
  */
 static inline bool usbcan_rx_feed(struct usbcan_rx_stream *s,
-		const u8 *data, unsigned int len, unsigned int header_size,
-		int (*record_size)(const u8 *, int),
+		const u8 *data, unsigned int len, unsigned int header_size, bool zero_terminator,
+		int (*record_size)(void *, const u8 *, int),
 		void (*record)(void *, const u8 *, int), void *context)
 {
-	unsigned int take, target;
+	unsigned int take, target, offset = 0;
 	int size;
 
+	s->sequence++;
+	if (header_size < 4 || header_size > USBCAN_RX_RECORD_MAX)
+		goto invalid;
 	if (!len) {
 		if (s->used)
 			goto invalid;
 		return true;
 	}
 	while (len) {
+		if (!s->used) {
+			s->origin_sequence = s->sequence;
+			s->origin_offset = offset;
+		}
 		target = s->used < USBCAN_RX_MARKER_SIZE ? USBCAN_RX_MARKER_SIZE :
 			 s->needed ? s->needed : header_size;
 		take = min(len, target - s->used);
@@ -38,17 +47,25 @@ static inline bool usbcan_rx_feed(struct usbcan_rx_stream *s,
 		s->used += take;
 		data += take;
 		len -= take;
+		offset += take;
 		if (s->used < target)
 			continue;
-		if (!s->data[0] && !s->data[1] && !s->data[2] && !s->data[3]) {
+		if (zero_terminator && !s->data[0] && !s->data[1] && !s->data[2] && !s->data[3]) {
 			s->used = s->needed = 0;
 			return true;
 		}
-		if (!s->needed && s->used == header_size) {
-			size = record_size(s->data, header_size);
-			if (size < (int)header_size || size > (int)USBCAN_RX_RECORD_MAX)
+		if (!s->needed) {
+			/* Validate the marker as soon as it is complete. A partial
+			 * header returns zero; it is not yet a body-length decision.
+			 */
+			size = record_size(context, s->data, s->used);
+			if (size < 0)
 				goto invalid;
-			s->needed = size;
+			if (s->used == header_size) {
+				if (size < (int)header_size || size > (int)USBCAN_RX_RECORD_MAX)
+					goto invalid;
+				s->needed = size;
+			}
 		}
 		if (s->needed && s->used == s->needed) {
 			record(context, s->data, s->needed);

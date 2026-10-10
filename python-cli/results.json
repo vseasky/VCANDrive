@@ -1,0 +1,1376 @@
+{
+  "phases": [
+    {
+      "label": "MIXED CLASSIC 250000 ch0",
+      "passed": true,
+      "bitrate": 250000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 3997,
+          "rx_payload_bytes": 3997,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 6,
+          "tx_bytes": 64000,
+          "rx_bytes": 384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 0,
+          "rx_completed": 2006,
+          "tx_bytes": 0,
+          "rx_bytes": 128384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.0325280940160155
+    },
+    {
+      "label": "MIXED CLASSIC 250000 ch1",
+      "passed": true,
+      "bitrate": 250000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 3997,
+          "rx_payload_bytes": 3997,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 0,
+          "rx_completed": 2007,
+          "tx_bytes": 0,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 7,
+          "tx_bytes": 64000,
+          "rx_bytes": 448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.6924738209927455
+    },
+    {
+      "label": "MIXED CLASSIC 1000000 ch0",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 3997,
+          "rx_payload_bytes": 3997,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 5,
+          "tx_bytes": 64000,
+          "rx_bytes": 320,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 0,
+          "rx_completed": 2004,
+          "tx_bytes": 0,
+          "rx_bytes": 128256,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 6.127772763982648
+    },
+    {
+      "label": "MIXED CLASSIC 1000000 ch1",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 3997,
+          "rx_payload_bytes": 3997,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 0,
+          "rx_completed": 2005,
+          "tx_bytes": 0,
+          "rx_bytes": 128320,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 6,
+          "tx_bytes": 64000,
+          "rx_bytes": 384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 6.930598698992981
+    },
+    {
+      "label": "MIXED CLASSIC/FD ch0",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 21600,
+          "rx_payload_bytes": 21600,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 6,
+          "tx_bytes": 135680,
+          "rx_bytes": 384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 0,
+          "rx_completed": 2006,
+          "tx_bytes": 0,
+          "rx_bytes": 210304,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 6.469905470003141
+    },
+    {
+      "label": "MIXED CLASSIC/FD ch1",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 21600,
+          "rx_payload_bytes": 21600,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 0,
+          "rx_completed": 2006,
+          "tx_bytes": 0,
+          "rx_bytes": 210304,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 6,
+          "tx_bytes": 135680,
+          "rx_bytes": 384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 6.753862438024953
+    },
+    {
+      "label": "SEQUENCE CLASSIC A->B 500k",
+      "passed": true,
+      "bitrate": 500000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 3,
+          "tx_bytes": 64000,
+          "rx_bytes": 192,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 0,
+          "rx_completed": 2003,
+          "tx_bytes": 0,
+          "rx_bytes": 128192,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 3.7305090859881602
+    },
+    {
+      "label": "SEQUENCE FD B->A 1M/5M",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 2000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 0,
+          "rx_completed": 1997,
+          "tx_bytes": 0,
+          "rx_bytes": 255808,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 3,
+          "tx_bytes": 176000,
+          "rx_bytes": 192,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 3.9452384570031427
+    },
+    {
+      "label": "BUS 1",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.471677448018454
+    },
+    {
+      "label": "BUS 2",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 176000,
+          "rx_bytes": 256512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 176000,
+          "rx_bytes": 256512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 8.38669358001789
+    },
+    {
+      "label": "BUS 3",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 176000,
+          "rx_bytes": 256448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 176000,
+          "rx_bytes": 256448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.7346327120030764
+    },
+    {
+      "label": "LOOPBACK 1",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": true,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        },
+        {
+          "sender": 1,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2006,
+          "tx_bytes": 64000,
+          "rx_bytes": 128384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.5176221599977
+    },
+    {
+      "label": "LOOPBACK 2",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": false,
+      "loopback": true,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 1,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 176000,
+          "rx_bytes": 256448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2006,
+          "tx_bytes": 176000,
+          "rx_bytes": 256384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.471901356999297
+    },
+    {
+      "label": "LOOPBACK 3",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": true,
+      "links": [
+        {
+          "sender": 0,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 1,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 176000,
+          "rx_bytes": 256512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 176000,
+          "rx_bytes": 256448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 8.612955043994589
+    },
+    {
+      "label": "REOPEN 1",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.46851304298616
+    },
+    {
+      "label": "REOPEN 2",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2006,
+          "tx_bytes": 176000,
+          "rx_bytes": 256384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 176000,
+          "rx_bytes": 256512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 8.281830679014092
+    },
+    {
+      "label": "REOPEN 3",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 64000,
+          "rx_bytes": 128448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2006,
+          "tx_bytes": 64000,
+          "rx_bytes": 128384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 7.269536174979294
+    },
+    {
+      "label": "REOPEN 4",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": 5000000,
+      "fd": true,
+      "brs": true,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 56000,
+          "rx_payload_bytes": 56000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2006,
+          "tx_bytes": 176000,
+          "rx_bytes": 256384,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2007,
+          "tx_bytes": 176000,
+          "rx_bytes": 256448,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 8.057243513991125
+    },
+    {
+      "label": "REOPEN 5",
+      "passed": true,
+      "bitrate": 1000000,
+      "data_bitrate": null,
+      "fd": false,
+      "brs": false,
+      "loopback": false,
+      "links": [
+        {
+          "sender": 1,
+          "receiver": 0,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        },
+        {
+          "sender": 0,
+          "receiver": 1,
+          "tx_frames": 2000,
+          "rx_valid_frames": 2000,
+          "tx_payload_bytes": 16000,
+          "rx_payload_bytes": 16000,
+          "equal": true
+        }
+      ],
+      "rx_observed_frames": 4000,
+      "invalid_frames": 0,
+      "anomalies": [],
+      "usb_transfers": [
+        {
+          "channel": 0,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 64000,
+          "rx_bytes": 128512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        },
+        {
+          "channel": 1,
+          "tx_completed": 2000,
+          "rx_completed": 2008,
+          "tx_bytes": 64000,
+          "rx_bytes": 128512,
+          "tx_errors": 0,
+          "rx_errors": 0,
+          "app_rx_dropped": 0,
+          "app_rx_overflow": 0
+        }
+      ],
+      "controllers": [
+        {
+          "channel": 0,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        },
+        {
+          "channel": 1,
+          "state": "BusState.ACTIVE",
+          "bec": {
+            "rxerr": 0,
+            "txerr": 0
+          }
+        }
+      ],
+      "elapsed_seconds": 9.147477168007754
+    }
+  ],
+  "totals": {
+    "tx_frames": 60000,
+    "rx_valid_frames": 60000,
+    "tx_payload_bytes": 963188,
+    "rx_payload_bytes": 963188,
+    "all_completed_phases_passed": true
+  },
+  "coverage_gaps": [
+    "ECU periodic scheduling",
+    "ISO-TP",
+    "J1939 TP",
+    "canfdtest request/reply semantics",
+    "measured 90% load / saturation",
+    "physical ESI fault injection"
+  ],
+  "counter_units": {
+    "links": "CAN frames and payload bytes",
+    "usb_transfers": "USB completion events and wire bytes"
+  }
+}

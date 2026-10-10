@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.host import error_hint
 
 import can
 
@@ -89,6 +95,24 @@ def _format_message(message: can.Message) -> str:
             f"[{message.dlc:>2}] {data}")
 
 
+def _info(args: argparse.Namespace) -> int:
+    info = _backend(args.interface).read_device_info(
+        channel=args.channel, index=args.device, bus=args.usb_bus,
+        address=args.usb_address, port_path=args.usb_port_path,
+        timeout_ms=args.usb_timeout_ms)
+    info = {**info, "interface": args.interface, "channel": args.channel,
+            "identity_key": f"{info['uuid_hex']}:{args.channel}"}
+    if args.json:
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+    else:
+        fields = ("interface", "channel", "uid_hex", "uuid_hex",
+                  "identity_key", "sw_version_full_text", "hw_version_text",
+                  "usb_speed")
+        print(json.dumps({key: info[key] for key in fields},
+                         ensure_ascii=False, indent=2))
+    return 0
+
+
 def _list(args: argparse.Namespace) -> int:
     backend = _backend(args.interface)
     interfaces = backend.discover_interfaces(
@@ -98,16 +122,15 @@ def _list(args: argparse.Namespace) -> int:
         print("no CAN interfaces found", file=sys.stderr)
         return 1
     for item in interfaces:
-        print(
-            f"channel={item.number} "
-            f"bus={item.bus} "
-            f"address={item.address} "
-            f"port_path={_format_port_path(item.port_path)} "
-            f"ep_in=0x{item.ep_in.bEndpointAddress:02x} "
-            f"ep_out=0x{item.ep_out.bEndpointAddress:02x} "
-            f"in_mps={item.ep_in.wMaxPacketSize} "
-            f"out_mps={item.ep_out.wMaxPacketSize}"
-        )
+        line = (f"channel={item.number} bus={item.bus} "
+                f"address={item.address} "
+                f"port_path={_format_port_path(item.port_path)}")
+        if args.verbose:
+            line += (f" ep_in=0x{item.ep_in.bEndpointAddress:02x} "
+                     f"ep_out=0x{item.ep_out.bEndpointAddress:02x} "
+                     f"in_mps={item.ep_in.wMaxPacketSize} "
+                     f"out_mps={item.ep_out.wMaxPacketSize}")
+        print(line)
     return 0
 
 
@@ -140,6 +163,8 @@ def _send(args: argparse.Namespace) -> int:
 
 def _receive(args: argparse.Namespace) -> int:
     with can.Bus(**_bus_kwargs(args)) as bus:
+        print(f"Listening on {args.interface} channel {args.channel}, bitrate={args.bitrate}; "
+              "another node must transmit at the same bitrate.", flush=True)
         received = 0
         while args.count == 0 or received < args.count:
             message = bus.recv(args.timeout)
@@ -147,6 +172,8 @@ def _receive(args: argparse.Namespace) -> int:
                 if args.count == 0:
                     continue
                 print(f"receive timeout ({received}/{args.count})", file=sys.stderr)
+                print("Check the sender, bitrate, CANH/CANL, termination and channel. "
+                      "See ../udocs/01_快速入门.md.", file=sys.stderr)
                 return 1
             received += 1
             print(_format_message(message), flush=True)
@@ -255,7 +282,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--usb-timeout-ms", type=int, default=2_000)
 
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("list", help="list descriptor-discovered CAN interfaces")
+    info = commands.add_parser("info", help="show board identity and versions without starting CAN")
+    info.add_argument("--json", action="store_true",
+                      help="show every device-info field as formatted JSON")
+    listing = commands.add_parser("list", help="list descriptor-discovered CAN interfaces")
+    listing.add_argument("--verbose", action="store_true",
+                         help="also show endpoint addresses and packet sizes")
 
     send = commands.add_parser("send", help="send one or more CAN frames")
     send.add_argument("can_id", type=_int)
@@ -313,6 +345,7 @@ def main() -> int:
     try:
         return {
             "list": _list,
+            "info": _info,
             "send": _send,
             "recv": _receive,
             "termination": _termination,
@@ -326,6 +359,9 @@ def main() -> int:
         return 130
     except (ImportError, can.CanError, OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        hint = error_hint(exc, args.interface)
+        if hint:
+            print(hint, file=sys.stderr)
         return 2
 
 

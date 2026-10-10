@@ -2,11 +2,11 @@
 
 Out-of-tree Linux SocketCAN driver for the GS_CAN USB-CAN(FD) mode.
 
-> 新用户先看[快速入门](../../udocs/start/快速入门.md)。
-> 中文文档：[SocketCAN 使用手册](../../udocs/linux/SocketCAN使用手册.md)、
-> [驱动特殊 API 说明](../../udocs/reference/驱动特殊API说明.md)。
+> 新用户先看[快速入门](../../udocs/01_快速入门.md)。
+> 中文文档：[SocketCAN 使用手册](../../udocs/09_SocketCAN使用手册.md)、
+> [驱动特殊 API 说明](../../docs/development/USB协议与驱动特殊API-20261010.md)。
 
-Start with the [quickstart](../../udocs/start/快速入门.md): identify the USB mode, connect two CAN channels with correct termination, build the matching module, check both `canX` interfaces, then exchange one frame. Run the [acceptance route](../../udocs/verify/验证路线.md) after that first frame succeeds.
+Start with the [quickstart](../../udocs/01_快速入门.md): identify the USB mode, connect two CAN channels with correct termination, build the matching module, check both `canX` interfaces, then exchange one frame. Run the [acceptance route](../../udocs/10_验证路线.md) after that first frame succeeds.
 
 ## Topology
 
@@ -113,8 +113,8 @@ sudo ip link set can0 up
 sudo ip link set can1 up
 ```
 
-See the [SocketCAN manual](../../udocs/linux/SocketCAN使用手册.md) for FD sending and
-the [acceptance route](../../udocs/verify/验证路线.md) for automated coverage.
+See the [SocketCAN manual](../../udocs/09_SocketCAN使用手册.md) for FD sending and
+the [acceptance route](../../udocs/10_验证路线.md) for automated coverage.
 
 ## Test
 

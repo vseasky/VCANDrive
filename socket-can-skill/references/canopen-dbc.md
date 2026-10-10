@@ -1,6 +1,6 @@
 # SocketCAN 上的 CANopen 与 DBC
 
-用户路线：先按[快速入门](../../udocs/start/快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../../udocs/verify/验证路线.md)验收 Linux 内核路径，最后使用本页 API。
+用户路线：先按[快速入门](../../udocs/01_快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../../udocs/10_验证路线.md)验收 Linux 内核路径，最后使用本页 API。
 
 SocketCAN 只负责传输 CAN/CAN FD 帧。DBC 与 CANopen 位于应用层：
 

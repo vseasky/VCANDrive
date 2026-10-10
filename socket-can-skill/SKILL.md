@@ -1,51 +1,30 @@
 ---
 name: socket-can-skill
-description: Build and troubleshoot Linux SocketCAN applications for VCANDrive canX interfaces, including CAN/CAN FD setup, C/C++ PF_CAN sockets, can-utils, DBC workflows, and CANopen integration. Use for Linux netdevice projects; use python-can-skill for direct cross-platform USB backends.
+description: 帮助用户在 Linux 使用 VCANDrive SocketCAN canX 接口，完成驱动安装、通道定位、can-utils 或 PF_CAN 收发，以及 DBC 和 CANopen 应用；直接 USB 的跨平台 Python 应用使用 python-can-skill。
 ---
 
 # VCANDrive SocketCAN
 
-用户路线：先按[快速入门](../udocs/start/快速入门.md)安装驱动并收发第一帧，再按[验收测试路线](../udocs/verify/验证路线.md)验收 Linux 内核路径，最后使用本页 API。
+先按[Linux 驱动安装](../udocs/08_Linux内核驱动安装.md)确认设备绑定，再按[SocketCAN 使用手册](../udocs/09_SocketCAN使用手册.md)收发第一帧。
 
-Build Linux applications on the stable SocketCAN network interface. Once the correct VCANDrive module has registered a `canX` netdevice, application code should use standard `PF_CAN` APIs and should not depend on USB endpoint details.
+## 选择路径
 
-For a first-time user, start with [the quick-start route](../udocs/start/快速入门.md) and verify one frame before designing the application protocol.
+| 当前设备模式 | USB ID | Linux 模块 |
+|---|---|---|
+| VCAN | `1d50:6080` | `vcan_usb` |
+| GS_CAN | `1d50:606f` | `vkgs_usb` |
 
-## Route the request
+以下示例以 VCAN 为主；GS_CAN 用户替换为 `vkgs_usb`。PCAN 模式先看[设备管理器](../udocs/03_设备管理器.md)。GS_CAN 设备若被系统 `gs_usb` 抢先绑定，按安装文档检查实际驱动。
 
-1. Confirm the device mode and driver ownership:
+- 安装、接口配置、终端和 can-utils：看 [Linux 使用参考](references/vcandrive-linux.md)。
+- C/C++ PF_CAN socket、过滤、CAN FD 和错误帧：看 [SocketCAN API](references/socketcan-api.md)。
+- DBC 与 CANopen 应用：看 [CANopen/DBC 参考](references/canopen-dbc.md)。
+- Windows、macOS 或 Linux 上直接打开 USB 的 Python 应用：改用 `python-can-skill`。
 
-   | USB personality | VID:PID | Preferred module | Userspace name |
-   |---|---|---|---|
-   | VCAN native | `1d50:6080` | `vcan_usb` | `canX` |
-   | GS_USB / VKGS | `1d50:606f` | `vkgs_usb` | `canX` |
+## 使用时核对
 
-   Linux's in-tree `gs_usb` can claim `1d50:606f`. Confirm the actual bound driver through sysfs before diagnosing application code.
-
-2. Load only the references needed for the request:
-
-   - For module selection, interface setup, termination, diagnostics, or can-utils, read [references/vcandrive-linux.md](references/vcandrive-linux.md).
-   - For C/C++ raw sockets, filters, CAN FD, polling, timestamps, and error frames, read [references/socketcan-api.md](references/socketcan-api.md).
-   - For CANopen or DBC-backed applications, read [references/canopen-dbc.md](references/canopen-dbc.md) plus the transport reference relevant to the implementation language.
-   - If the request must access the VCANDrive USB interface directly on Windows, macOS, or Linux, use `python-can-skill` instead.
-
-3. When this repository is present, use `udocs/linux/Linux内核驱动安装.md`, `udocs/linux/SocketCAN使用手册.md`, `udocs/start/设备管理器.md`, and the matching `kernel/*/README.md` as project-specific references. Inspect driver source only when needed for diagnosis; do not change it unless the user explicitly asks.
-
-## Implementation invariants
-
-- `can0` and `can1` are dynamically assigned network-interface names, not guaranteed physical channel labels. Resolve mappings through sysfs or a deliberate persistent naming rule.
-- Configure bit timing, controller mode, and termination while the interface is down; application sockets do not configure those values by themselves.
-- Enable `CAN_RAW_FD_FRAMES` before sending or receiving CAN FD on a raw socket. On receive, distinguish `CAN_MTU` from `CANFD_MTU` before using FD-only flags.
-- Keep identifier flags (`CAN_EFF_FLAG`, `CAN_RTR_FLAG`, `CAN_ERR_FLAG`) separate from the 11-bit or 29-bit application identifier.
-- Socket filters are per-socket receive filters. They are not the device firmware's hardware filter table and do not affect other processes.
-- Subscribe to error frames explicitly with `CAN_RAW_ERR_FILTER`; ordinary data-frame reception does not automatically expose every controller error.
-- Local SocketCAN echo and controller `loopback on` are different mechanisms. Name the intended behavior in tests.
-- Do not run traffic generators, change termination, unload modules, or reconfigure a production bus unless the user placed that bus in scope.
-
-## Shape of a maintainable project
-
-Separate host setup (`ip link`, udev/systemd/network management) from the unprivileged application. The application should open a named interface, install its own filters, handle timeouts and `EINTR`, validate exact frame sizes, and close descriptors on all paths.
-
-Keep signal or device-profile knowledge outside the transport layer. A DBC codec turns raw payloads into named signals; a CANopen stack implements NMT, PDO, SDO, EMCY, and heartbeat over raw CAN frames. Neither belongs in the USB driver.
-
-Validate protocol logic on a Linux `vcan` interface where possible, then run an explicitly identified hardware test on VCANDrive. Verify classic CAN first, then CAN FD/BRS, and finally bus-off recovery and error reporting if the application depends on them.
+- `can0`、`can1` 是动态分配的网络接口名。用[身份查询](../udocs/09_SocketCAN使用手册.md#定位唯一板卡和通道)把 UUID 与板内通道号对应起来，再选应用所用的 `canX`。
+- 先在接口关闭时配置位率、FD 模式和终端，再启用接口；应用打开 PF_CAN socket 不能代替这些设置。
+- CAN FD raw socket 要启用 `CAN_RAW_FD_FRAMES`，接收时按返回长度区分经典帧和 FD 帧。
+- Python USB 后端与内核驱动不能同时占用同一 USB 通道。切换路径时先关闭现有程序，再按[常见问题](../udocs/02_常见问题.md)处理绑定。
+- 测试脚本会发送真实流量并重配接口，只在指定的测试总线上运行。先确认第一帧，再按[验收路线](../udocs/10_验证路线.md)做完整测试。

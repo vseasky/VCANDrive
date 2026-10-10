@@ -1,6 +1,6 @@
 # CANopen Python 开发工作流
 
-用户路线：先按[快速入门](../../udocs/start/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/verify/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+用户路线：先按[快速入门](../../udocs/01_快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/10_验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
 
 CANopen 是建立在 CAN 之上的应用层与通信配置体系。VCANDrive 负责可靠收发 CAN 帧；对象字典、NMT、PDO、SDO、EMCY、SYNC 和 heartbeat 由 CANopen 栈处理。
 
@@ -14,11 +14,11 @@ CANopen 是建立在 CAN 之上的应用层与通信配置体系。VCANDrive 负
 安装：
 
 ```bash
-python -m pip install canopen
-python -m pip install -e ./python-cli/vkgs_usb
+python3 canctl.py setup
+python3 canctl.py run -m pip install canopen
 ```
 
-VCAN 原生模式将安装目录和接口名换成 `vcan_usb`。
+以上命令在 `python-cli/` 目录运行；Windows 将 `python3` 改为 `py`。自己的程序也用 `python3 canctl.py run your_script.py` 运行。示例以 VCAN 为主，GS_CAN 用户将接口名改为 `vkgs_usb`。
 
 ## 建立网络连接
 
@@ -29,7 +29,7 @@ import canopen
 
 network = canopen.Network()
 network.connect(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     port_path="2.1.4",
     bitrate=500_000,

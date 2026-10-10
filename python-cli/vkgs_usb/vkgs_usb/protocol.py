@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterator
+import copy
+import logging
 from dataclasses import dataclass
 import errno
 import struct
@@ -217,6 +220,7 @@ class CanDevice:
         channel: int = 0,
         timeout_ms: int = TIMEOUT_MS,
         control_device: Any = None,
+        zero_terminator: bool = True,
     ) -> None:
         self.dev = device if device is not None else usb.core.find(
             idVendor=VID, idProduct=PID)
@@ -224,12 +228,17 @@ class CanDevice:
             raise ProtocolError(f"device {VID:04x}:{PID:04x} not found")
 
         self.control_dev = control_device if control_device is not None else self.dev
+        self.zero_terminator = zero_terminator
         self.channel = channel
         self.interface = channel
         self.timeout = timeout_ms
         self.timestamps_enabled = False
         self.fd_mode_enabled = False
         self._rx_tail = b""
+        self._rx_expected = 0
+        self._rx_origin = None
+        self._rx_sequence = 0
+        self._rx_trace = deque(maxlen=32)
         # Kept current by STATE/BERR event frames (see parse_bulk()); lets
         # callers read bus/error state without an extra USB round trip.
         self.can_state = CAN_STATE_STOPPED
@@ -336,6 +345,7 @@ class CanDevice:
         feature, clock_hz = values[:2]
         nominal = values[2:]
         data = None
+        fd_nominal = None
         if feature & FEATURE_FD:
             if not feature & FEATURE_BT_CONST_EXT:
                 raise ProtocolError("FD advertised without extended bit-timing limits")
@@ -343,9 +353,11 @@ class CanDevice:
                 self.get_control(BREQ_BT_CONST_EXT, BT_CONST_EXT_FIELDS.size))
             if extended[1] != clock_hz:
                 raise ProtocolError("inconsistent nominal/data clock")
+            fd_nominal = extended[2:10]
             data = extended[10:]
         return {"feature": feature, "clock_hz": clock_hz,
-                "fd": bool(feature & FEATURE_FD), "nominal": nominal, "data": data}
+                "fd": bool(feature & FEATURE_FD), "nominal": nominal,
+                "fd_nominal": fd_nominal, "data": data}
 
     def info(self) -> dict[str, Any]:
         """Read firmware, hardware, and device identity information."""
@@ -580,7 +592,64 @@ class CanDevice:
             "error_logging_count": log_count,
         }
 
+    def reset_rx(self, *, reason: str | None = None) -> None:
+        """End a stream; keep bounded diagnostic history across sessions."""
+        if reason is not None and self._rx_trace:
+            self._rx_trace[-1]["stream_end_reason"] = reason
+        self._rx_tail = b""
+        self._rx_expected = 0
+        self._rx_origin = None
+        self.can_state = CAN_STATE_STOPPED
+        self.bec = {"rxerr": 0, "txerr": 0}
+        self.last_berr = None
+        self.last_bus_load = None
+
+    def get_rx_trace(self) -> list[dict[str, Any]]:
+        """Snapshot the last 32 reads (up to 4096 raw bytes per read)."""
+        return copy.deepcopy(list(self._rx_trace))
+
+    def _retain_tail(self, buffer: bytes, offset: int, expected: int) -> None:
+        tail = buffer[offset:]
+        if not len(tail) < expected <= 512:
+            raise ProtocolError("invalid partial record bound")
+        self._rx_tail = tail
+        self._rx_expected = expected
+        self._rx_origin = self._rx_current_origin if offset == 0 else (
+            self._rx_sequence, offset - self._rx_previous_tail)
+        self._rx_trace[-1]["partial"] = {
+            "origin": self._rx_origin, "used": len(tail), "expected": expected}
+
     def parse_bulk(self, transfer: bytes) -> Iterator[CanFrame]:
+        """Consume ordered reads; USB completion is not a record boundary.
+
+        The vendor firmware uses a zero terminator at record boundaries and
+        pads the rest of the completed packet/bundle. No padding debt is
+        carried into the next read, including after an HS short packet.
+        """
+        self._rx_sequence += 1
+        self._rx_previous_tail = len(self._rx_tail)
+        self._rx_current_origin = self._rx_origin or (self._rx_sequence, 0)
+        entry = {"sequence": self._rx_sequence, "actual_length": len(transfer),
+                 "endpoint_mps": self.ep_in.wMaxPacketSize,
+                 "carry_length": self._rx_previous_tail,
+                 "raw_hex": transfer[:4096].hex(),
+                 "raw_truncated": len(transfer) > 4096, "records": []}
+        self._rx_trace.append(entry)
+        logging.getLogger(__name__).debug("bulk IN %s", entry)
+        try:
+            if not transfer and self._rx_tail:
+                raise ProtocolError("ZLP terminates an incomplete record")
+            yield from self._parse_bulk(transfer)
+        except Exception as exc:
+            entry["discard_reason"] = str(exc)
+            self.reset_rx()
+            raise
+        finally:
+            if not self._rx_tail:
+                self._rx_expected = 0
+                self._rx_origin = None
+
+    def _parse_bulk(self, transfer: bytes) -> Iterator[CanFrame]:
         """Decode a USB transfer, retaining an incomplete trailing frame."""
         buffer = self._rx_tail + transfer
         self._rx_tail = b""
@@ -589,16 +658,17 @@ class CanDevice:
         while offset < len(buffer):
             remaining = len(buffer) - offset
             if remaining < _ECHO_ID.size:
-                self._rx_tail = buffer[offset:]
+                self._retain_tail(buffer, offset, _ECHO_ID.size)
                 break
 
             echo_id = _ECHO_ID.unpack_from(buffer, offset)[0]
-            # Four zero bytes terminate a bundle. Remaining bytes are alignment
-            # padding or stale FIFO data and must be ignored.
-            if echo_id == 0:
+            # Vendor FIFO profile only. Standard GS_USB echo index 0 is
+            # a record, not a sentinel; select zero_terminator=False for it.
+            if self.zero_terminator and echo_id == 0:
+                self._rx_trace[-1]["padding_offset"] = offset - self._rx_previous_tail
                 break
             if remaining < HOST_HEADER.size:
-                self._rx_tail = buffer[offset:]
+                self._retain_tail(buffer, offset, HOST_HEADER.size)
                 break
 
             # STATE/BERR/LOAD event frames use a different field layout than
@@ -616,6 +686,8 @@ class CanDevice:
                 _echo_id, raw_can_id, dlc, channel, flags, _reserved = (
                     HOST_HEADER.unpack_from(buffer, offset)
                 )
+                if dlc > 15 or flags & ~0x0f:
+                    raise ProtocolError("invalid CAN frame header")
                 payload_width = (
                     _FD_FRAME_WIDTH if flags & FLAG_FD else _CLASSIC_FRAME_WIDTH
                 )
@@ -641,16 +713,18 @@ class CanDevice:
                 else:
                     event_channel = buffer[offset + _ECHO_ID.size]
 
-            if offset + frame_size > len(buffer):
-                self._rx_tail = buffer[offset:]
-                break
-
             frame_channel = event_channel if is_event else channel
             if frame_channel != self.channel:
                 raise ProtocolError(
                     f"bulk frame channel {frame_channel} != interface "
                     f"{self.channel}"
                 )
+
+            if not is_event and flags & FLAG_FD and raw_can_id & CAN_RTR:
+                raise ProtocolError("CAN FD remote frame is invalid")
+            if offset + frame_size > len(buffer):
+                self._retain_tail(buffer, offset, frame_size)
+                break
 
             if echo_id == ECHO_RX:
                 is_fd = bool(flags & FLAG_FD)
@@ -663,7 +737,7 @@ class CanDevice:
                     timestamp_us = struct.unpack_from(
                         "<Q", buffer, offset + frame_size - _TIMESTAMP_SIZE
                     )[0]
-                yield CanFrame(
+                frame = CanFrame(
                     can_id=raw_can_id & (
                         CAN_ID_MASK if raw_can_id & (CAN_EFF | CAN_ERR) else CAN_STD_ID_MASK
                     ),
@@ -680,6 +754,7 @@ class CanDevice:
                     overflow=bool(flags & FLAG_OVERFLOW),
                     timestamp_us=timestamp_us,
                 )
+                yield frame
             elif echo_id == ECHO_STATE:
                 self._handle_state_event(buffer, offset)
                 if frame_size == _EXTENDED_STATE_FRAME_SIZE:
@@ -703,4 +778,13 @@ class CanDevice:
                     "tx_time_ns": tx_ns,
                     "rx_time_ns": rx_ns,
                 }
+            self._rx_trace[-1]["records"].append({
+                "offset": offset - self._rx_previous_tail,
+                "origin": self._rx_current_origin if offset == 0 else (
+                    self._rx_sequence, offset - self._rx_previous_tail),
+                "consumed": frame_size, "marker": echo_id,
+                "decoded": {"can_id": frame.can_id, "data_hex": frame.data.hex(),
+                            "channel": frame.channel, "fd": frame.fd,
+                            "rtr": frame.rtr, "error": frame.error}
+                if echo_id == ECHO_RX else None})
             offset += frame_size

@@ -85,6 +85,7 @@ class Context:
         self._stop_event = threading.Event()
         self._event_error: BaseException | None = None
         self._closed = False
+        self._devices = set()
         self._event_thread: threading.Thread | None = None
         if start_event_thread:
             self._event_thread = threading.Thread(
@@ -174,11 +175,17 @@ class Context:
         """Stop event dispatch and release the underlying libusb context."""
         if self._closed:
             return
-        self._closed = True
+        # Keep the event dispatcher/context alive until every cancellation
+        # has completed. A failed drain intentionally retains ownership.
+        for device in tuple(self._devices):
+            device.close()
         self._stop_event.set()
         if self._event_thread is not None:
             self._event_thread.join(timeout=_EVENT_THREAD_JOIN_TIMEOUT_S)
+            if self._event_thread.is_alive():
+                raise RuntimeError("libusb event dispatcher did not stop")
         self.usb.close()
+        self._closed = True
         atexit.unregister(self.close)
 
 
@@ -272,6 +279,13 @@ class AsyncDevice:
             raise
         self._transfers: list[usb1.USBTransfer] = []
         self._active = False
+        self._closed = False
+        self._closing = False
+        self._rx_generation = 0
+        self._rx_pending = set()
+        self._tx_pending = None
+        if self.event_context is not None:
+            self.event_context._devices.add(self)
         self._rx_condition = threading.Condition()
         # libusb's blocking bulkWrite() drives its own event handling.  Mixing
         # that path with this object's dedicated async IN event dispatcher can
@@ -350,6 +364,13 @@ class AsyncDevice:
             completion_event.set()
 
         with self._tx_lock:
+            if self._closed or self._closing:
+                raise usb.core.USBError("USB interface is closed")
+            if self._tx_pending is not None:
+                old_transfer, old_done, _payload = self._tx_pending
+                if not old_done.is_set():
+                    raise usb.core.USBError("previous bulk OUT cancellation is still pending")
+                self._tx_pending = None
             event_error = (None if self.event_context is None else
                            self.event_context.error)
             if event_error is not None:
@@ -357,9 +378,11 @@ class AsyncDevice:
                     "libusb event dispatcher stopped") from event_error
             transfer = self.handle.getTransfer()
             transfer.setBulk(endpoint, payload, on_complete, timeout=timeout)
+            self._tx_pending = (transfer, completion_event, payload)
             try:
                 transfer.submit()
             except usb1.USBError as exc:
+                self._tx_pending = None
                 self._stats["tx_errors"] += 1
                 raise _pyusb_error(exc) from exc
 
@@ -367,12 +390,24 @@ class AsyncDevice:
             # small host-side guard so a failed event dispatcher cannot strand
             # the caller forever; timeout=0 intentionally remains unlimited.
             host_timeout = None if timeout == 0 else timeout / 1000.0 + 1.0
-            if not completion_event.wait(host_timeout):
+            deadline = None if host_timeout is None else time.monotonic() + host_timeout
+            while not completion_event.wait(0.05):
+                if self._closing:
+                    break
+                if (self.event_context is not None and self.event_context.error is not None):
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+            if not completion_event.is_set():
                 if transfer.isSubmitted():
                     try:
                         transfer.cancel()
                     except usb1.USBErrorNotFound:
                         pass
+                # cancel() only requests cancellation. Retain transfer and
+                # immutable payload, and block another OUT until callback.
+                if completion_event.wait(_RX_CANCEL_TIMEOUT_S):
+                    self._tx_pending = None
                 self._stats["tx_errors"] += 1
                 event_error = (None if self.event_context is None else
                                self.event_context.error)
@@ -382,6 +417,7 @@ class AsyncDevice:
                 raise usb.core.USBTimeoutError(
                     "asynchronous bulk OUT completion timed out", -7, 110)
 
+            self._tx_pending = None
             status = completion["status"]
             if status != usb1.TRANSFER_COMPLETED:
                 self._stats["tx_errors"] += 1
@@ -400,30 +436,52 @@ class AsyncDevice:
             return bytes_written
 
     def start_rx(self, callback: Callable[[bytes], None], size: int = DEFAULT_RX_TRANSFER_SIZE,
-                 count: int = RX_TRANSFER_COUNT) -> None:
+                 count: int = RX_TRANSFER_COUNT,
+                 on_error: Callable[[BaseException], None] | None = None) -> None:
         """Submit and maintain a fixed-size pool of bulk-IN transfers."""
-        if count < 1:
-            raise ValueError("bulk-IN transfer count must be positive")
+        if count != 1:
+            raise ValueError("exactly one active bulk-IN transfer is required")
         if self._active or self._transfers:
             raise RuntimeError("bulk-IN transfer pool is already active")
         size = rx_transfer_size(self.ep_in.wMaxPacketSize, size)
+        if size != self.ep_in.wMaxPacketSize:
+            raise ValueError("vendor FIFO receive requires one USB packet per read")
+        if self._closed or self._closing:
+            raise RuntimeError("USB interface is closed")
+        if self.event_context is not None and self.event_context.error is not None:
+            raise RuntimeError("libusb event dispatcher stopped") from self.event_context.error
         self._active = True
+        self._rx_generation += 1
+        generation = self._rx_generation
 
         def on_complete(transfer: usb1.USBTransfer) -> None:
-            status = transfer.getStatus()
-            if status == usb1.TRANSFER_COMPLETED:
-                actual_length = transfer.getActualLength()
-                with self._rx_condition:
+            # The condition covers delivery and resubmission: stop_rx cannot
+            # return while a callback still owns the parser or resubmit late.
+            with self._rx_condition:
+                try:
+                    if not self._active or generation != self._rx_generation:
+                        return
+                    status = transfer.getStatus()
+                    if status != usb1.TRANSFER_COMPLETED:
+                        raise usb.core.USBError(f"bulk IN failed: status={status}")
+                    actual_length = transfer.getActualLength()
                     self._stats["rx_completed"] += 1
                     self._stats["rx_bytes"] += actual_length
+                    callback(bytes(transfer.getBuffer()[:actual_length]))
+                    if self._active and generation == self._rx_generation:
+                        transfer.submit()
+                        return
+                except BaseException as exc:
+                    self._stats["rx_errors"] += 1
+                    self._active = False
+                    if on_error is not None:
+                        on_error(exc)
+                    elif self.event_context is not None:
+                        self.event_context._event_error = exc
+                finally:
+                    if not transfer.isSubmitted():
+                        self._rx_pending.discard(transfer)
                     self._rx_condition.notify_all()
-                callback(bytes(transfer.getBuffer()[:actual_length]))
-            elif status not in (usb1.TRANSFER_CANCELLED,
-                                 usb1.TRANSFER_NO_DEVICE):
-                self._stats["rx_errors"] += 1
-            if self._active and status not in (usb1.TRANSFER_NO_DEVICE,
-                                               usb1.TRANSFER_CANCELLED):
-                transfer.submit()
 
         self._transfers = []
         try:
@@ -432,7 +490,13 @@ class AsyncDevice:
                 transfer.setBulk(self.ep_in.bEndpointAddress, size, on_complete,
                                  timeout=0)
                 self._transfers.append(transfer)
-                transfer.submit()
+                with self._rx_condition:
+                    self._rx_pending.add(transfer)
+                    try:
+                        transfer.submit()
+                    except Exception:
+                        self._rx_pending.discard(transfer)
+                        raise
         except Exception:
             self.stop_rx()
             raise
@@ -442,24 +506,45 @@ class AsyncDevice:
         return len(self._transfers)
 
     def stop_rx(self) -> None:
-        """Cancel the bulk-IN pool and wait briefly for callbacks to drain."""
-        self._active = False
-        for transfer in self._transfers:
-            if transfer.isSubmitted():
-                try:
-                    transfer.cancel()
-                except usb1.USBErrorNotFound:
-                    pass
-        deadline = time.monotonic() + _RX_CANCEL_TIMEOUT_S
-        while (any(transfer.isSubmitted() for transfer in self._transfers) and
-               time.monotonic() < deadline):
-            time.sleep(_RX_CANCEL_POLL_INTERVAL_S)
-        self._transfers.clear()
+        """Cancel reads; retain all resources if callbacks fail to drain."""
+        with self._rx_condition:
+            self._active = False
+            self._rx_generation += 1
+            for transfer in self._transfers:
+                if transfer.isSubmitted():
+                    try:
+                        transfer.cancel()
+                    except usb1.USBErrorNotFound:
+                        pass
+            deadline = time.monotonic() + _RX_CANCEL_TIMEOUT_S
+            while self._rx_pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("bulk IN cancellation did not complete; resources retained")
+                self._rx_condition.wait(remaining)
+            self._transfers.clear()
 
     def close(self) -> None:
-        """Stop transfers, release the interface, and close its device handle."""
+        """Close only after IN and OUT completions no longer own buffers."""
+        if self._closed:
+            return
+        self._closing = True
         self.stop_rx()
-        try:
-            self.handle.releaseInterface(self.interface)
-        finally:
-            self.handle.close()
+        with self._tx_lock:
+            if self._tx_pending is not None:
+                transfer, done, _payload = self._tx_pending
+                if transfer.isSubmitted():
+                    try:
+                        transfer.cancel()
+                    except usb1.USBErrorNotFound:
+                        pass
+                if not done.wait(_RX_CANCEL_TIMEOUT_S):
+                    raise RuntimeError("bulk OUT cancellation did not complete; resources retained")
+                self._tx_pending = None
+            try:
+                self.handle.releaseInterface(self.interface)
+            finally:
+                self.handle.close()
+            self._closed = True
+            if self.event_context is not None:
+                self.event_context._devices.discard(self)

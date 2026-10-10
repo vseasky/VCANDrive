@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterator
+import copy
+import logging
 from dataclasses import dataclass
 import struct
 from typing import Any
@@ -213,6 +216,10 @@ class CanDevice:
         self.timeout = timeout_ms
         self.control_dev = control_device if control_device is not None else self.dev
         self._rx_tail = b""
+        self._rx_expected = 0
+        self._rx_origin = None
+        self._rx_sequence = 0
+        self._rx_trace = deque(maxlen=32)
         # Kept current by STATE/BERR event frames (see parse_bulk()); lets
         # callers read bus/error state without an extra USB round trip.
         self.can_state = CAN_STATE_STOPPED
@@ -320,7 +327,7 @@ class CanDevice:
         if (
             echo_id != ECHO_SETUP
             or (response_flags & 0x7F) != request
-            or (response_opcode & _OPCODE_SIZE_MASK) != len(response)
+            or response_opcode != opcode(self.channel, len(response))
         ):
             raise ProtocolError("invalid setup response")
         return response[HEADER.size:]
@@ -331,6 +338,7 @@ class CanDevice:
         feature, clock_hz = values[:2]
         nominal = values[2:]
         data = None
+        fd_nominal = None
         if feature & FEATURE_FD:
             if not feature & FEATURE_BT_CONST_EXT:
                 raise ProtocolError("FD advertised without extended bit-timing limits")
@@ -338,9 +346,11 @@ class CanDevice:
                 self.get_control(BREQ_BT_CONST_EXT, BT_CONST_EXT_FIELDS.size))
             if extended[1] != clock_hz:
                 raise ProtocolError("inconsistent nominal/data clock")
+            fd_nominal = extended[2:10]
             data = extended[10:]
         return {"feature": feature, "clock_hz": clock_hz,
-                "fd": bool(feature & FEATURE_FD), "nominal": nominal, "data": data}
+                "fd": bool(feature & FEATURE_FD), "nominal": nominal,
+                "fd_nominal": fd_nominal, "data": data}
 
     def info(self) -> dict[str, Any]:
         """Read firmware, hardware, and device identity information."""
@@ -529,7 +539,64 @@ class CanDevice:
                 "error_logging_count": log_count,
             }
 
+    def reset_rx(self, *, reason: str | None = None) -> None:
+        """End a stream; keep bounded diagnostic history across sessions."""
+        if reason is not None and self._rx_trace:
+            self._rx_trace[-1]["stream_end_reason"] = reason
+        self._rx_tail = b""
+        self._rx_expected = 0
+        self._rx_origin = None
+        self.can_state = CAN_STATE_STOPPED
+        self.bec = {"rxerr": 0, "txerr": 0}
+        self.last_berr = None
+        self.last_bus_load = None
+
+    def get_rx_trace(self) -> list[dict[str, Any]]:
+        """Snapshot the last 32 reads (up to 4096 raw bytes per read)."""
+        return copy.deepcopy(list(self._rx_trace))
+
+    def _retain_tail(self, buffer: bytes, offset: int, expected: int) -> None:
+        tail = buffer[offset:]
+        if not len(tail) < expected <= 512:
+            raise ProtocolError("invalid partial record bound")
+        self._rx_tail = tail
+        self._rx_expected = expected
+        self._rx_origin = self._rx_current_origin if offset == 0 else (
+            self._rx_sequence, offset - self._rx_previous_tail)
+        self._rx_trace[-1]["partial"] = {
+            "origin": self._rx_origin, "used": len(tail), "expected": expected}
+
     def parse_bulk(self, transfer: bytes) -> Iterator[CanFrame]:
+        """Consume ordered reads; USB completion is not a record boundary.
+
+        The vendor firmware uses a zero terminator at record boundaries and
+        pads the rest of the completed packet/bundle. No padding debt is
+        carried into the next read, including after an HS short packet.
+        """
+        self._rx_sequence += 1
+        self._rx_previous_tail = len(self._rx_tail)
+        self._rx_current_origin = self._rx_origin or (self._rx_sequence, 0)
+        entry = {"sequence": self._rx_sequence, "actual_length": len(transfer),
+                 "endpoint_mps": self.ep_in.wMaxPacketSize,
+                 "carry_length": self._rx_previous_tail,
+                 "raw_hex": transfer[:4096].hex(),
+                 "raw_truncated": len(transfer) > 4096, "records": []}
+        self._rx_trace.append(entry)
+        logging.getLogger(__name__).debug("bulk IN %s", entry)
+        try:
+            if not transfer and self._rx_tail:
+                raise ProtocolError("ZLP terminates an incomplete record")
+            yield from self._parse_bulk(transfer)
+        except Exception as exc:
+            entry["discard_reason"] = str(exc)
+            self.reset_rx()
+            raise
+        finally:
+            if not self._rx_tail:
+                self._rx_expected = 0
+                self._rx_origin = None
+
+    def _parse_bulk(self, transfer: bytes) -> Iterator[CanFrame]:
         """Decode a USB transfer, retaining an incomplete trailing frame."""
         buffer = self._rx_tail + transfer
         self._rx_tail = b""
@@ -538,12 +605,20 @@ class CanDevice:
         while offset < len(buffer):
             remaining = len(buffer) - offset
             if remaining < _ECHO_ID.size:
-                self._rx_tail = buffer[offset:]
+                prefix = buffer[offset:]
+                if not any(_ECHO_ID.pack(marker).startswith(prefix)
+                           for marker in (0, ECHO_RX, ECHO_TX, ECHO_STATE, ECHO_LOAD)):
+                    raise ProtocolError("invalid partial bulk marker")
+                self._retain_tail(buffer, offset, _ECHO_ID.size)
                 break
             if _ECHO_ID.unpack_from(buffer, offset)[0] == 0:
+                self._rx_trace[-1]["padding_offset"] = offset - self._rx_previous_tail
                 break  # Ignore stale FIFO padding after the zero sentinel.
+            marker = _ECHO_ID.unpack_from(buffer, offset)[0]
+            if marker not in (ECHO_RX, ECHO_TX, ECHO_STATE, ECHO_LOAD):
+                raise ProtocolError("unknown bulk frame marker")
             if remaining < HEADER.size:
-                self._rx_tail = buffer[offset:]
+                self._retain_tail(buffer, offset, HEADER.size)
                 break
             echo_id, frame_opcode, flags = HEADER.unpack_from(buffer, offset)
 
@@ -551,13 +626,29 @@ class CanDevice:
             channel = (frame_opcode >> _OPCODE_CHANNEL_SHIFT) & 0x0F
             if not HEADER.size <= frame_size <= _MAX_WIRE_FRAME_SIZE:
                 raise ProtocolError("invalid bulk frame length")
-            if offset + frame_size > len(buffer):
-                self._rx_tail = buffer[offset:]
-                break
+            if echo_id not in (ECHO_RX, ECHO_TX, ECHO_STATE, ECHO_LOAD):
+                raise ProtocolError("unknown bulk frame marker")
+            if echo_id in (ECHO_RX, ECHO_TX):
+                expected_size = _HEADER_AND_FRAME_FIELDS_SIZE + (
+                    _FD_FRAME_WIDTH if flags & FLAG_FD else _CLASSIC_FRAME_WIDTH)
+                if frame_size != expected_size or flags & ~0x7f:
+                    raise ProtocolError("invalid CAN frame header")
             if channel != self.channel:
                 raise ProtocolError(
-                    f"bulk frame channel {channel} != interface {self.channel}"
-                )
+                    f"bulk frame channel {channel} != interface {self.channel}")
+            if echo_id == ECHO_STATE:
+                fields = _STATE_EVENT_FIELDS.get(flags)
+                if fields is None:
+                    raise ProtocolError("unknown state event type")
+                if frame_size < HEADER.size + fields.size:
+                    raise ProtocolError("truncated state/error event")
+            if echo_id == ECHO_LOAD and frame_size < HEADER.size + DEVICE_LOAD_FIELDS.size:
+                raise ProtocolError("truncated load event")
+            if echo_id in (ECHO_RX, ECHO_TX) and flags & FLAG_FD and flags & FLAG_RTR:
+                raise ProtocolError("CAN FD remote frame is invalid")
+            if offset + frame_size > len(buffer):
+                self._retain_tail(buffer, offset, frame_size)
+                break
 
             if echo_id == ECHO_RX:
                 if frame_size < _HEADER_AND_FRAME_FIELDS_SIZE:
@@ -568,6 +659,8 @@ class CanDevice:
                 is_fd = bool(flags & FLAG_FD)
                 if is_fd and flags & FLAG_RTR:
                     raise ProtocolError("CAN FD remote frame is invalid")
+                if dlc > 15:
+                    raise ProtocolError("invalid CAN DLC")
                 data_length = dlc_to_length(dlc, is_fd)
                 data_offset = offset + _HEADER_AND_FRAME_FIELDS_SIZE
                 expected_size = data_offset - offset + (
@@ -575,7 +668,7 @@ class CanDevice:
                 )
                 if frame_size < expected_size:
                     raise ProtocolError("truncated CAN frame payload")
-                yield CanFrame(
+                frame = CanFrame(
                     can_id=can_id & (
                         CAN_EXT_ID_MASK if flags & (FLAG_EFF | FLAG_ERR) else CAN_STD_ID_MASK
                     ),
@@ -590,6 +683,7 @@ class CanDevice:
                     overflow=bool(flags & FLAG_OVERFLOW),
                     timestamp_us=timestamp_us,
                 )
+                yield frame
             elif echo_id == ECHO_STATE:
                 self._handle_state_event(flags, buffer, offset, frame_size)
             elif echo_id == ECHO_LOAD:
@@ -604,5 +698,14 @@ class CanDevice:
                     "tx_time_ns": tx_ns,
                     "rx_time_ns": rx_ns,
                 }
+            self._rx_trace[-1]["records"].append({
+                "offset": offset - self._rx_previous_tail,
+                "origin": self._rx_current_origin if offset == 0 else (
+                    self._rx_sequence, offset - self._rx_previous_tail),
+                "consumed": frame_size, "marker": echo_id,
+                "decoded": {"can_id": frame.can_id, "data_hex": frame.data.hex(),
+                            "channel": frame.channel, "fd": frame.fd,
+                            "rtr": frame.rtr, "error": frame.error}
+                if echo_id == ECHO_RX else None})
             offset += frame_size
 

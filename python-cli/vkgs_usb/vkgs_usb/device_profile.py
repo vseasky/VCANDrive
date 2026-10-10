@@ -10,7 +10,7 @@ HC32_BRP_MAX = 256
 
 
 def effective_capabilities(capabilities: dict, device_info: dict | None) -> dict:
-    """Intersect HC32 advertised timing ranges with REF BSP constraints."""
+    """Apply legacy HC32 Classic/data clamps; preserve independent FD nominal limits."""
     result = dict(capabilities)
     raw_hw = device_info.get("raw_hw_version") if isinstance(device_info, dict) else None
     if not isinstance(raw_hw, int) or (raw_hw >> HW_PLATFORM_SHIFT) & HW_PLATFORM_MASK != HW_PLATFORM_HC32:

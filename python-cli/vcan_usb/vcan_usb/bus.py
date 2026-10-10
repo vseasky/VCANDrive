@@ -122,12 +122,19 @@ def _format_usb_open_error(
             "process using this channel and confirm the selected interface is "
             "bound to WinUSB. Other interfaces on the adapter may remain open."
         )
-    if _is_usb_access_error(exc):
-        return (
-            message +
-            "; access denied. Check udev permissions or close the process that "
-            "already owns this USB interface."
-        )
+    if sys.platform.startswith("linux") and _is_usb_access_error(exc):
+        return (message + "; Linux USB device permissions denied. Configure udev access "
+                "for your login user (repository tool: python3 canctl.py permissions). "
+                "Permission changes do not release a kernel CAN driver.")
+    if sys.platform.startswith("linux") and (
+            getattr(exc, "value", None) == -6 or "LIBUSB_ERROR_BUSY" in str(exc)):
+        return (message + "; a kernel driver or another application owns this interface. "
+                "Run python3 canctl.py doctor and release the selected board first. "
+                "For temporary insmod-loaded modules, manual unloading uses rmmod, "
+                "not modprobe -r; identity may also be read from SocketCAN sysfs.")
+    if sys.platform == "darwin" and _is_usb_access_error(exc):
+        return (message + "; macOS denied USB access. Check accessory approval, "
+                "native libusb availability and other applications using this device.")
     return message
 
 
@@ -259,11 +266,11 @@ class _UsbSession:
 
     def release(self, interface_device: Any) -> None:
         """Release this Bus interface and its independently owned resources."""
-        try:
-            interface_device.close()
-        finally:
-            if self.context is not interface_device:
-                self.context.close()
+        # A failed cancellation must keep the dispatcher/context and handle
+        # alive. close() is retryable once the outstanding callbacks drain.
+        interface_device.close()
+        if self.context is not interface_device:
+            self.context.close()
 
 
 class UsbCanBus(can.BusABC):
@@ -271,6 +278,13 @@ class UsbCanBus(can.BusABC):
 
     DEVICE_MODULE: ClassVar[Any]
     INTERFACE_NAME: ClassVar[str]
+
+    @classmethod
+    def _info_with_channel(cls, info: dict[str, Any], channel: int) -> dict[str, Any]:
+        result = {**info, "interface": cls.INTERFACE_NAME, "channel": channel}
+        if info.get("uuid_hex"):
+            result["identity_key"] = f"{info['uuid_hex']}:{channel}"
+        return result
 
     @classmethod
     def switch_usb_mode(
@@ -334,6 +348,25 @@ class UsbCanBus(can.BusABC):
                 # device, so releasing the now-disconnected handle may fail.
                 if not request_sent:
                     raise
+
+    @classmethod
+    def read_device_info(cls, *, channel: int = 0, index: int = 0,
+                         bus: int | None = None, address: int | None = None,
+                         port_path: object = None, timeout_ms: int = 2_000) -> dict[str, Any]:
+        """Query BSP identity without configuring or starting CAN/bulk RX."""
+        if channel < 0 or timeout_ms <= 0:
+            raise ValueError("channel must be >= 0 and timeout_ms must be > 0")
+        session, transport = _UsbSession.acquire(
+            cls.DEVICE_MODULE.VID, cls.DEVICE_MODULE.PID, channel=channel,
+            index=index, bus=bus, address=address,
+            port_path=usb_transport.normalize_port_path(port_path))
+        try:
+            device = cls.DEVICE_MODULE.CanDevice(
+                device=transport, channel=channel, timeout_ms=timeout_ms,
+                control_device=session.control_device)
+            return cls._info_with_channel(device.info(), channel)
+        finally:
+            session.release(transport)
 
     @classmethod
     def discover_interfaces(cls, *, index: int = 0,
@@ -437,6 +470,8 @@ class UsbCanBus(can.BusABC):
         self._rx_condition = threading.Condition()
         self._io_lock = threading.RLock()
         self._rx_error: BaseException | None = None
+        self._rx_epoch = 0
+        self._rx_enabled = False
         self._device_info: dict[str, Any] | None = None
         self._started = False
         self._start_flags = 0
@@ -444,6 +479,7 @@ class UsbCanBus(can.BusABC):
         self._termination_setting = termination
         self._bus_load_setting = bus_load_reporting
         self._is_shutdown = False
+        self._resources_released = False
         try:
             self._protocol_device = self.DEVICE_MODULE.CanDevice(
                 device=self._usb_interface, channel=channel_number,
@@ -459,20 +495,14 @@ class UsbCanBus(can.BusABC):
                 self._device_info = None
             self._capabilities = effective_capabilities(
                 self._protocol_device.capabilities(), self._device_info)
-            self._nominal_timing = _calculate_timing(
-                self._capabilities["clock_hz"], bitrate, sample_point,
-                self._capabilities["nominal"])
+            self._bitrate = bitrate
+            self._sample_point = sample_point
+            self._nominal_timing = None
             self._data_timing = None
             self._data_bitrate = data_bitrate
             self._data_sample_point = data_sample_point
             # BSP_INFO is optional; when available its platform identifier
             # corrects known over-advertised timing limits before configuration.
-            # Claim/open has completed.  Submit this interface's independent
-            # IN pool before the first firmware configuration command so no
-            # startup response/event can race receiver registration.
-            self._usb_interface.start_rx(self._accept_bulk)
-            self._usb_interface.ensure_rx_submitted(
-                usb_transport.RX_TRANSFER_COUNT)
             self.configure(fd=fd, fd_non_iso=fd_non_iso)
             if auto_start:
                 self.start()
@@ -501,28 +531,67 @@ class UsbCanBus(can.BusABC):
         super().__init__(channel=channel_number, can_filters=can_filters,
                          **kwargs)
 
-    def _accept_bulk(self, transfer: bytes) -> None:
-        """Decode one USB transfer without calling user code."""
-        try:
-            received_frames = list(
-                self._protocol_device.parse_bulk(transfer))
-        except BaseException as exc:
-            with self._rx_condition:
+    def _pause_rx(self) -> None:
+        # Invalidate old callbacks before waiting, without holding the parser
+        # lock across transport cancellation (the callback needs that lock).
+        with self._rx_condition:
+            self._rx_enabled = False
+            self._rx_epoch += 1
+        self._usb_interface.stop_rx()
+        with self._rx_condition:
+            self._protocol_device.reset_rx(reason="session stopped/reconfigured")
+            self._rx_queue.clear()
+            self._rx_error = None
+            self._rx_condition.notify_all()
+
+    def _resume_rx(self) -> None:
+        with self._rx_condition:
+            epoch = self._rx_epoch
+            self._rx_enabled = True
+        self._usb_interface.start_rx(
+            lambda data: self._accept_bulk(data, epoch),
+            on_error=lambda exc: self._accept_rx_error(exc, epoch))
+        self._usb_interface.ensure_rx_submitted(usb_transport.RX_TRANSFER_COUNT)
+
+    def _accept_rx_error(self, exc: BaseException, epoch: int) -> None:
+        with self._rx_condition:
+            if epoch != self._rx_epoch or not self._rx_enabled:
+                return
+            self._protocol_device.reset_rx(reason=str(exc))
+            self._rx_error = exc
+            self._rx_condition.notify_all()
+
+    def _accept_bulk(self, transfer: bytes, epoch: int | None = None) -> None:
+        """Decode in order; a failed stream stays failed until stop/configure."""
+        with self._rx_condition:
+            if (not self._rx_enabled or self._is_shutdown or
+                    (epoch is not None and epoch != self._rx_epoch) or
+                    self._rx_error is not None):
+                return
+            try:
+                received_frames = list(self._protocol_device.parse_bulk(transfer))
+            except BaseException as exc:
+                self._protocol_device.reset_rx(reason=str(exc))
                 self._rx_error = exc
                 self._rx_condition.notify_all()
-            return
-        if received_frames:
-            with self._rx_condition:
-                self._rx_overflow += sum(
-                    int(getattr(frame, "overflow", False))
-                    for frame in received_frames
-                )
-                available = self._rx_queue_size - len(self._rx_queue)
-                accepted = received_frames[:available]
-                self._rx_queue.extend(accepted)
-                self._rx_dropped += len(received_frames) - len(accepted)
-                if accepted:
-                    self._rx_condition.notify_all()
+                return
+            self._rx_overflow += sum(int(getattr(frame, "overflow", False))
+                                     for frame in received_frames)
+            available = self._rx_queue_size - len(self._rx_queue)
+            accepted = received_frames[:available]
+            self._rx_queue.extend(accepted)
+            dropped = len(received_frames) - len(accepted)
+            self._rx_dropped += dropped
+            if dropped:
+                self._protocol_device.reset_rx(reason=f"receive queue lost {dropped} frames")
+                self._rx_error = can.CanOperationError(
+                    f"receive queue lost {dropped} frames; stop/configure before restarting")
+            self._rx_condition.notify_all()
+
+    def get_rx_trace(self) -> list[dict[str, Any]]:
+        """Return bounded raw-read and record diagnostics, including failures."""
+        with self._rx_condition:
+            return self._protocol_device.get_rx_trace()
 
     def send(self, msg: can.Message, timeout: float | None = None) -> None:
         if self._is_shutdown:
@@ -562,6 +631,8 @@ class UsbCanBus(can.BusABC):
         if not acquired:
             raise can.CanOperationError("send queue timeout")
         try:
+            if not self._started or self._is_shutdown:
+                raise can.CanOperationError("channel is not started")
             remaining = (
                 None if deadline is None
                 else max(0.0, deadline - time.monotonic())
@@ -619,13 +690,13 @@ class UsbCanBus(can.BusABC):
         return message, False
 
     def shutdown(self) -> None:
-        already_shutdown = self._is_shutdown
         super().shutdown()
-        if already_shutdown:
+        if self._resources_released:
             return
         with self._rx_condition:
             self._rx_condition.notify_all()
         try:
+            self._pause_rx()
             if self._protocol_device is not None and self._started:
                 with self._io_lock:
                     self._protocol_device.stop()
@@ -646,6 +717,7 @@ class UsbCanBus(can.BusABC):
                     pass
                 self._protocol_device._claimed = False
             self._usb_session.release(self._usb_interface)
+            self._resources_released = True
 
     def start(self) -> None:
         """Start a configured channel; useful for synchronized multi-channel open."""
@@ -654,14 +726,20 @@ class UsbCanBus(can.BusABC):
         if self._started:
             return
         with self._io_lock:
-            self._protocol_device.start(self._start_flags)
-        self._started = True
+            try:
+                self._resume_rx()
+                self._protocol_device.start(self._start_flags)
+            except Exception:
+                self._pause_rx()
+                raise
+            self._started = True
 
     def stop(self) -> None:
         """Stop and return the interface to its host-format baseline."""
-        if self._is_shutdown or not self._started:
+        if self._is_shutdown:
             return
         with self._io_lock:
+            self._pause_rx()
             self._protocol_device.stop()
             if hasattr(self._protocol_device, "host_format"):
                 self._protocol_device.host_format()
@@ -687,7 +765,14 @@ class UsbCanBus(can.BusABC):
                 self._data_timing = _calculate_timing(
                     self._capabilities["clock_hz"], self._data_bitrate,
                     self._data_sample_point, self._capabilities["data"])
+        nominal_limits = self._capabilities.get("fd_nominal") if fd else self._capabilities["nominal"]
+        if nominal_limits is None:
+            raise can.CanOperationError("missing FD arbitration timing limits")
+        self._nominal_timing = _calculate_timing(
+            self._capabilities["clock_hz"], self._bitrate,
+            self._sample_point, nominal_limits)
         with self._io_lock:
+            self._pause_rx()
             # A newly opened host handle does not imply that MCAN was closed:
             # USB configuration and CAN controller state have independent
             # lifetimes.  Force the firmware to observe RESET before applying
@@ -739,7 +824,7 @@ class UsbCanBus(can.BusABC):
                     "stop channel before querying device information")
             with self._io_lock:
                 self._device_info = self._protocol_device.info()
-        return dict(self._device_info)
+        return self._info_with_channel(self._device_info, self.channel)
 
     def set_termination(self, enabled: bool) -> None:
         if self._started:

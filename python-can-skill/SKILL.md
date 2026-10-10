@@ -1,63 +1,32 @@
 ---
 name: python-can-skill
-description: Build and troubleshoot Python applications using VCANDrive vcan_usb or vkgs_usb python-can backends, including CAN/CAN FD, multi-device access, DBC signal coding, and CANopen integration. Use for Python API projects and tests; use socket-can-skill for Linux PF_CAN or canX applications.
+description: 帮助用户在 Windows、Linux 或 macOS 使用 VCANDrive 的 python-can USB 后端，完成设备定位、CAN/CAN FD 收发、DBC 和 CANopen 应用；Linux canX 应用使用 socket-can-skill。
 ---
 
 # VCANDrive Python CAN
 
-用户路线：先按[快速入门](../udocs/start/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../udocs/verify/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+先按[快速入门](../udocs/01_快速入门.md)安装、定位通道并收发第一帧。常见权限、占用和超时错误见[常见问题](../udocs/02_常见问题.md)。
 
-Build applications against the repository's public `python-can` backends. Keep the transport choice, CAN application protocol, and hardware validation separate so code can be tested without a live bus.
+## 选择路径
 
-For a first-time user, start with [the quick-start route](../udocs/start/快速入门.md) and prove one frame on the chosen transport before adding DBC or CANopen.
+| 当前设备模式 | USB ID | `can.Bus` 的 `interface` |
+|---|---|---|
+| VCAN | `1d50:6080` | `vcan_usb` |
+| GS_CAN | `1d50:606f` | `vkgs_usb` |
 
-## Route the request
+以下示例以 VCAN 为主；GS_CAN 用户将 `vcan_usb` 改为 `vkgs_usb`。PCAN 模式先看[设备管理器](../udocs/03_设备管理器.md)。`vcan_usb` 是本设备的 USB 后端，不是 Linux 的虚拟 `vcan0`。
 
-1. Identify the device's current USB personality before selecting a backend:
+- 原始 CAN/CAN FD 收发、设备发现、身份和扩展 API：看 [Python API 使用参考](references/vcandrive-python-api.md) 与 [用户 API 参考](../udocs/07_PythonAPI参考.md)。
+- DBC 信号编解码：看 [DBC 工作流](references/dbc-workflow.md)。
+- CANopen 对象字典、NMT、PDO、SDO：看 [CANopen 工作流](references/canopen-workflow.md)。
+- Linux `canX`、`candump` 或 PF_CAN：改用 `socket-can-skill`。
 
-   | USB personality | VID:PID | Package | `can.Bus` interface |
-   |---|---|---|---|
-   | VCAN native | `1d50:6080` | `vcan-usb` | `vcan_usb` |
-   | GS_USB / VKGS | `1d50:606f` | `vkgs-usb` | `vkgs_usb` |
+## 使用时核对
 
-   Do not use `vcan_usb` as a synonym for Linux's virtual `vcan` network interface.
+- 一块硬件用完整 UID/UUID 识别，具体通道用 `uuid_hex:channel`；`can0`、USB 地址和发现序号可能变化。多板卡先用 `list`、`info` 核对，再选目标设备。
+- 一个 `Bus` 对应一个通道；用 `with can.Bus(...)` 或 `shutdown()` 关闭。同一 USB 通道不能同时被 Python 和 SocketCAN 驱动占用。
+- 发送 CAN FD 前在 Bus 上设置 `fd=True`，报文设置 `is_fd=True`；需要 BRS 时再设置 `bitrate_switch=True`。
+- 发送超时后结果可能不确定；业务协议未提供去重机制时，不要自动重发。
+- 切换 USB 模式会重启设备、使旧句柄失效；先关闭正在使用的通道，切换后重新查询 UID/UUID。
 
-2. Select the application layer:
-
-   - First verify actual API send/receive with [the two-channel example](../udocs/python/API验证.md). For raw CAN/CAN FD frames, device discovery, lifecycle, or backend extensions, read [references/vcandrive-python-api.md](references/vcandrive-python-api.md).
-   - For signal-oriented applications backed by a `.dbc`, read [references/dbc-workflow.md](references/dbc-workflow.md) and the API reference.
-   - For CANopen networks backed by an EDS/DCF object dictionary, read [references/canopen-workflow.md](references/canopen-workflow.md) and the API reference.
-   - If the requested transport is Linux `socketcan` with a `canX` interface, use `socket-can-skill` instead.
-
-3. When this repository is present, treat these files as the implementation source of truth:
-
-   - `python-cli/vcan_usb/vcan_usb/bus.py`
-   - `python-cli/vkgs_usb/vkgs_usb/bus.py`
-   - `python-cli/tools/canctl.py`
-   - `udocs/python/PythonAPI参考.md`
-   - `udocs/start/设备管理器.md` for identity, version display, and USB personality changes
-
-   Check the implementation before documenting a new extension method or backend-specific behavior.
-
-## Implementation invariants
-
-- One `Bus` owns one USB interface. Use one `Bus` per channel and always close it with a context manager or `shutdown()` in `finally`.
-- Prefer `port_path` for stable selection among identical devices. `index` and USB `address` can change after re-enumeration.
-- A Python USB backend and a Linux SocketCAN driver cannot own the same USB interface at the same time.
-- Configure the controller with `fd=True` before sending a message with `is_fd=True`; BRS is a per-message choice through `bitrate_switch=True`.
-- Keep python-can `can_filters` semantics as software filtering. Do not silently replace them with VCANDrive's separate firmware filter request.
-- Do not automatically retry a send after an ambiguous USB timeout: the frame may already have reached the CAN bus.
-- Treat `switch_usb_mode()` as a disruptive device-management operation. It persists configuration, reboots the device, changes its USB identity, and invalidates open handles.
-- Do not modify the VCANDrive driver or firmware sources unless the user explicitly asks for implementation changes.
-
-## Shape of a maintainable project
-
-Keep three boundaries visible:
-
-- transport configuration: backend name, channel, bit timing, device selector;
-- protocol codec: raw frames, DBC signals, or CANopen object dictionary operations;
-- application behavior: timeouts, state machine, persistence, logging, and retries.
-
-Inject a `can.BusABC`-compatible bus into application code when practical. Unit-test codecs and state transitions with python-can's virtual bus or fake messages; keep USB discovery and physical bus tests in a separately marked hardware test.
-
-Before handing off code, verify cleanup on success and exceptions, timeout handling, standard versus extended identifiers, classical versus FD frame lengths, and at least one encode/decode round trip for every DBC message used.
+完成应用代码后，先按[API 验证](../udocs/06_API验证.md)核对收发，再按[验收路线](../udocs/10_验证路线.md)运行与当前主机路径对应的测试。

@@ -1,28 +1,32 @@
 # VCANDrive Python API 开发参考
 
-用户路线：先按[快速入门](../../udocs/start/快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/verify/验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
+用户路线：先按[快速入门](../../udocs/01_快速入门.md)建立 Python USB 环境并收发第一帧，再按[验收测试路线](../../udocs/10_验证路线.md)做矩阵/压力验证，最后接入本页的应用代码。
 
 ## 选择正确后端
 
 | 当前设备模式 | USB ID | 安装目录 | `interface` | 特有能力 |
 |---|---|---|---|---|
-| VCAN 原生 | `1d50:6080` | `python-cli/vcan_usb` | `vcan_usb` | 自描述 VCAN 帧协议 |
+| VCAN 原生 | `1d50:6080` | `python-cli/vcan_usb` | `vcan_usb` | 默认示例 |
 | GS_USB / VKGS | `1d50:606f` | `python-cli/vkgs_usb` | `vkgs_usb` | `identify()` LED 识别 |
 
-两套包要求 Python 3.10+，并依赖 `python-can>=4.3`、`pyusb>=1.2` 和 `libusb1>=3.4`。在仓库根目录安装开发版本：
+两套包要求 Python 3.10+。从仓库的 `python-cli/` 目录运行统一入口，Windows 将 `python3` 改为 `py`：
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -e ./python-cli/vkgs_usb
+python3 canctl.py setup
+python3 canctl.py doctor
+python3 canctl.py --interface vcan_usb list
+python3 canctl.py --interface vcan_usb --channel 0 info
 ```
 
-Windows 将解释器改为 `.venv\Scripts\python.exe`。只安装与设备当前 VID:PID 匹配的包。
+`setup` 负责安装后端；在 Linux 共享目录上也不需要手动创建虚拟环境。Linux 免 sudo 权限、内核绑定和 Windows WinUSB 配置见[快速入门](../../udocs/01_快速入门.md)。GS_CAN 将 `vcan_usb` 改为 `vkgs_usb`。
+
+运行自己的程序时用 `python3 canctl.py run your_script.py`，保证程序使用 `setup` 安装的同一 Python 环境；Windows 将 `python3` 改为 `py`。
 
 ## Bus 参数
 
 ```python
 can.Bus(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     index=0,
     bus=None,
@@ -55,9 +59,9 @@ can.Bus(
 ## 发现设备与固定通道
 
 ```python
-from vkgs_usb import vkgs_usb_bus
+from vcan_usb import vcan_usb_bus
 
-for item in vkgs_usb_bus.discover_interfaces(index=0):
+for item in vcan_usb_bus.discover_interfaces(index=0):
     print(
         item.number,
         item.bus,
@@ -68,7 +72,7 @@ for item in vkgs_usb_bus.discover_interfaces(index=0):
     )
 ```
 
-同一 `bus/address/port_path` 下的不同 `number` 通常属于同一物理设备的多个 CAN 通道。记录设备位置时优先保存 `port_path`，不要只保存 `index` 或会在重枚举后变化的 `address`。
+同一 `bus/address/port_path` 下的不同 `number` 通常属于同一物理设备的多个 CAN 通道。最终用 `info` 的 `uuid_hex` 识别板卡，以 `identity_key`（UUID 加通道号）识别唯一通道；`index`、`address` 和 `port_path` 用于当前连接的定位，设备移动后可能变化。
 
 ## 经典 CAN 收发
 
@@ -76,7 +80,7 @@ for item in vkgs_usb_bus.discover_interfaces(index=0):
 import can
 
 with can.Bus(
-    interface="vkgs_usb",       # VCAN 原生模式改为 vcan_usb
+    interface="vcan_usb",
     channel=0,
     port_path="2.1.4",          # 单设备临时测试可省略
     bitrate=500_000,
@@ -103,7 +107,7 @@ with can.Bus(
 import can
 
 with can.Bus(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     bitrate=1_000_000,
     fd=True,
@@ -128,7 +132,7 @@ filters = [
 ]
 
 with can.Bus(
-    interface="vkgs_usb",
+    interface="vcan_usb",
     channel=0,
     bitrate=500_000,
     can_filters=filters,
@@ -141,7 +145,7 @@ with can.Bus(
         notifier.stop()
 ```
 
-这里的过滤器遵循 python-can 软件过滤语义，不会配置固件 `CAN_FILTERS(35)` 硬件表。多个消费者需要明确由一个 `Notifier` 分发，避免多个线程同时 `recv()` 后难以判断帧归属。
+这里的过滤器只作用于当前 python-can Bus。多个消费者可由一个 `Notifier` 分发，避免多个线程同时 `recv()` 后难以判断帧归属。
 
 ## 多通道生命周期
 
@@ -150,7 +154,7 @@ import can
 
 buses = [
     can.Bus(
-        interface="vkgs_usb",
+        interface="vcan_usb",
         channel=channel,
         port_path="2.1.4",
         bitrate=1_000_000,
@@ -183,17 +187,16 @@ finally:
 | `state` | 后台事件更新的 `can.BusState` |
 | `get_berr_counter()` | 最近的 `rxerr` / `txerr` |
 | `identify(bool)` | 仅 `vkgs_usb` 支持 |
-| `wait_for_usb_rx(previous, timeout)` | 主要供硬件验收等待 bulk IN 进展 |
 
 停止状态才能修改的配置应集中完成，再调用一次 `start()`。`stop()/start()` 只影响 CAN 控制器，不能修复设备级 USB 端点故障。
 
 ## 模式切换
 
 ```python
-from vkgs_usb import vkgs_usb_bus
+from vcan_usb import vcan_usb_bus
 
-vkgs_usb_bus.switch_usb_mode(
-    "vcan",
+vcan_usb_bus.switch_usb_mode(
+    "gs_usb",
     channel=0,
     port_path="2.1.4",
 )
@@ -214,7 +217,7 @@ vkgs_usb_bus.switch_usb_mode(
 1. 纯函数：DBC 编解码、CANopen 状态转换、ID 与 DLC 验证。
 2. 虚拟总线：使用 python-can `virtual` backend 验证收发、Notifier 与超时，不依赖 USB。
 3. 应用单元测试：为编解码和状态转换编写项目内测试，不依赖真实 USB 设备。
-4. 硬件验收：两路接入同一隔离总线并确认终端后，在 `python-cli/` 运行 `./can-test --interface vcan_usb`（GS_CAN 使用 `vkgs_usb`）。它只运行完整双通道验收，包括经典/FD 混合帧、双向收发、回环、序号和重复打开；用 `--frames`、`--rounds` 延长高负载测试。
+4. 硬件验收：两路接入同一测试总线并确认终端后，在 `python-cli/` 运行 `python3 canctl.py test --interface vcan_usb --frames 2000`；Windows 将 `python3` 改为 `py`。GS_CAN 将接口名改为 `vkgs_usb`。测试命令和成功标志见[验收路线](../../udocs/10_验证路线.md)。
 
 上游参考：
 

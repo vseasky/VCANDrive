@@ -21,6 +21,8 @@ if __package__ in (None, ""):
 else:
     from ._helpers import _arbitration_id, _backend_class, _open_buses, _shutdown_buses
 
+from tools.host import error_hint
+
 STARTUP_TIMEOUT = 2.0
 
 
@@ -497,13 +499,13 @@ def main() -> int:
         parser.error('--window must be 1..1024, --rounds >= 1, and --reopen-loops >= 2')
     # The repository tool must remain usable when only one independent backend
     # is installed.  Import only the protocol selected by the user.
-    bus_class = _backend_class(args.interface)
     try:
+        bus_class = _backend_class(args.interface)
         discovered = bus_class.discover_channels(
             index=args.device, bus=args.usb_bus, address=args.usb_address,
             port_path=args.usb_port_path)
     except Exception as exc:
-        parser.error(f"USB interface discovery failed: {exc}")
+        parser.error(f"USB interface discovery failed: {exc}\n{error_hint(exc, args.interface)}")
     if not discovered:
         parser.error("device descriptors contain no bulk IN/OUT CAN interfaces")
     if len(discovered) != 2:
@@ -566,6 +568,9 @@ def main() -> int:
         return 1
     except (can.CanError, OSError, RuntimeError) as exc:
         print(f"ERROR: {exc}")
+        hint = error_hint(exc, args.interface)
+        if hint:
+            print(hint)
         if buses:
             _print_usb_stats(args, buses)
         return 2

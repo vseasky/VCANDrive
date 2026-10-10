@@ -757,7 +757,7 @@ class WinUsbDevice:
             raise _usb_error("WinUsb_ReadPipe")
         return int(transferred.value)
 
-    def _rx_worker(self, callback: Callable[[bytes], None]) -> None:
+    def _rx_worker(self, callback: Callable[[bytes], None], on_error=None) -> None:
         pending = deque(self._rx_transfers)
         while pending:
             transfer = pending[0]
@@ -783,6 +783,8 @@ class WinUsbDevice:
                     self._error = exc
                     self._active = False
                     self._cancel_rx_transfers()
+                    if on_error is not None:
+                        on_error(exc)
                 continue
 
             with self._rx_condition:
@@ -792,11 +794,14 @@ class WinUsbDevice:
                 self._stats["rx_bytes"] += actual_length
                 self._rx_condition.notify_all()
             try:
-                callback(bytes(transfer.buffer[:actual_length]))
+                if self._active:
+                    callback(bytes(transfer.buffer[:actual_length]))
             except BaseException as exc:
                 self._error = exc
                 self._active = False
                 self._cancel_rx_transfers()
+                if on_error is not None:
+                    on_error(exc)
             if self._active:
                 try:
                     self._submit_rx(transfer)
@@ -806,6 +811,8 @@ class WinUsbDevice:
                     self._error = exc
                     self._active = False
                     self._cancel_rx_transfers()
+                    if on_error is not None:
+                        on_error(exc)
         with self._rx_condition:
             self._rx_submitted = 0
             self._rx_condition.notify_all()
@@ -815,13 +822,19 @@ class WinUsbDevice:
         callback: Callable[[bytes], None],
         size: int = DEFAULT_RX_TRANSFER_SIZE,
         count: int = RX_TRANSFER_COUNT,
+        on_error: Callable[[BaseException], None] | None = None,
     ) -> None:
         """Submit and maintain an ordered pool of overlapped bulk-IN reads."""
-        if count < 1:
-            raise ValueError("bulk-IN transfer count must be positive")
+        if count != 1:
+            raise ValueError("exactly one active bulk-IN transfer is required")
         if self._active or self._rx_transfers:
             raise RuntimeError("bulk-IN transfer pool is already active")
+        if self._closed:
+            raise RuntimeError("USB interface is closed")
         size = rx_transfer_size(self.ep_in.wMaxPacketSize, size)
+        if size != self.ep_in.wMaxPacketSize:
+            raise ValueError("vendor FIFO receive requires one USB packet per read")
+        self._error = None
         self._active = True
         try:
             for _ in range(count):
@@ -835,7 +848,7 @@ class WinUsbDevice:
                 self._submit_rx(transfer)
             self._rx_thread = threading.Thread(
                 target=self._rx_worker,
-                args=(callback,),
+                args=(callback, on_error),
                 daemon=True,
                 name=f"winusb-mi{self.interface}-rx",
             )
